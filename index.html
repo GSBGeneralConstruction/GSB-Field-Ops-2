@@ -272,7 +272,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.12-b';
+const APP_VERSION = 'v2.0-2026.11.12-c';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -556,6 +556,22 @@ The parties will attempt good-faith negotiation before pursuing formal action. T
 ## 11. Entire Agreement
 
 This Agreement, together with any Orders issued under it, constitutes the entire agreement between the parties regarding its subject matter, and supersedes any prior discussions or agreements. It may be amended only in writing signed by both parties.` },
+  { id: 'estimate-included', label: 'Estimate — What\'s Included / Not Included', content: `## Included in this price
+- All labor and materials needed to complete the work listed in the Scope of Work, except items listed as Owner-Provided.
+- Preparing and submitting all permit applications needed for this job.
+- Scheduling the required city or county inspections.
+
+## Not included in this price
+- Permit fees charged by the city or county (see "Permits — How They Work").
+- Owner-Provided Items listed in the Scope of Work.
+- Any work that is not listed in the Scope of Work. Extra work is only done with a signed change order.` },
+  { id: 'estimate-permits', label: 'Estimate — Permits: How They Work', content: `- **We handle the paperwork.** GSB prepares and submits the permit applications for this job. That work is included in your price.
+- **The city or county charges its own fees.** Permit fees are set and charged by the city or county, not by GSB, so they are not part of our price. These fees are the Owner's responsibility.
+- **Inspections.** The city or county inspects the work at the required stages. GSB schedules these inspections.
+- **Questions?** Call us at 954-605-4746 and we will walk you through it.` },
+  { id: 'estimate-next', label: 'Estimate — Payments & Next Steps', content: `- **Step 1 — Accept the price.** Signing this estimate means you agree to the price for the work described. It is not the construction contract.
+- **Step 2 — Sign the Construction Contract.** The contract includes the full scope of work, the terms, and the payment schedule.
+- **Payments.** The contract price is paid in 7 payments as the job moves forward. The first payment (10% deposit) is due when the contract is signed. Each later payment is due when a stage of the job is reached, as listed in the contract.` },
   { id: 'estimate', label: 'Estimate — Terms & Disclaimer', content: `This estimate covers the scope of work described above. The pricing shown is the finalized price for that scope of work. All permit applications are included. Permit fees charged by the city or county are not included and are the Owner's responsibility. If change orders are added to the project, or if the price of materials is different, the price may change. This estimate is valid for 30 days from the date listed above only; after that date it is no longer valid and the pricing may change.` },
 ];
 
@@ -1317,19 +1333,10 @@ function publicEstimateCardHTML(e, alreadySigned){
   return `
     <div class="login-wrap" style="align-items:flex-start;padding:20px 14px;">
       <div class="login-card" style="max-width:640px;width:100%;text-align:left;">
-        <div style="text-align:center;"><img class="login-logo" src="${LOGO}"></div>
-        <div class="mono" style="font-size:11px;color:var(--muted);text-align:center;">13311 SW 9th Pl, Davie, FL 33325 | 954-605-4746 | Office@gsbconstructions.com</div>
-        <div style="font-size:10.5px;color:var(--muted);margin-bottom:12px;text-align:center;">Florida License #CGC1539336</div>
-        <h3 class="disp" style="font-size:17px;text-align:center;">PROJECT ESTIMATE</h3>
-        <div class="detail-grid" style="margin-bottom:12px;">${dg('Job Name',e.jobName)}${dg('Date',fmtDate(e.date))}${dg('Client',e.clientName)}${dg('Phone',e.clientPhone)}${dg('Address',e.address)}</div>
-        ${notesSection('Demolition', e.demo)}${notesSection('Construction & Installation', e.constr)}${notesSection('Electrical & Plumbing', e.ep)}
-        <div class="section-label">Estimated Pricing</div>
-        ${estimatePricingTableHTML(e)}
-        ${legalSlotSettings('estimate').mode==='pdf' ? uploadedDocPreviewHTML(legalSlotSettings('estimate'), 260) : `<div class="subtle" style="margin-top:12px;">${getEstimateDisclaimerHtml()}</div>`}
+        <div style="text-align:center;margin-bottom:10px;"><img class="login-logo" src="${LOGO}"></div>
+        ${estimateDocHTML(e)}
         ${alreadySigned ? `
-          <div class="section-label">Signature — Captured</div>
-          <img src="${e.signature}" style="border:1px solid var(--line);border-radius:6px;background:#fff;height:100px;">
-          <div class="subtle">Signed ${fmtDateTime(e.signedAt)}</div>
+          <div class="subtle" style="margin-top:10px;">Signed ${fmtDateTime(e.signedAt)}${e.signedOnPaper?' (on paper)':''}</div>
           <div style="text-align:center;margin-top:16px;">
             <button class="btn" data-action="public-print">Print / Save This Copy</button>
           </div>
@@ -4176,7 +4183,7 @@ function render(){
   attachHandlers();
   if(STATE.view==='onsite' && STATE.subtab.onsite==='new'){ attachPhotoCapture(); attachBeforePhotoCapture(); renderNewFloorPlanPreview(); renderNewPlanFiles(); }
   if(STATE.modal && STATE.modal.sigCanvasId) initSignaturePad(STATE.modal.sigCanvasId);
-  if(STATE.modal && STATE.modal.type==='contract-detail' && document.getElementById('paper-cam-in')) bindPaperScan(STATE.modal.data);
+  if(STATE.modal && (STATE.modal.type==='contract-detail' || STATE.modal.type==='estimate-detail') && document.getElementById('paper-cam-in')) bindPaperScan(STATE.modal.data);
   if(STATE.modal && (STATE.modal.type==='contract-form' || STATE.modal.type==='contract-detail')) bindPayTemplates();
   if(STATE.modal && STATE.modal.type==='permit-form') attachPermitPhotoCapture();
   if(STATE.modal && STATE.modal.type==='project-photo-form') attachGenericPhotoCapture();
@@ -4963,6 +4970,151 @@ function onsiteDetailView(f){
 function dg(k,v,blur){ return `<div class="dg-item"><div class="k">${k}</div><div class="v ${blur?'blur':''}">${esc(v)||'—'}</div></div>`; }
 function notesSection(label, text){ if(!text) return `<div class="section-label">${label}</div><div class="subtle">Nothing noted</div>`; return `<div class="section-label">${label}</div><div class="notes-block">${esc(text)}</div>`; }
 
+
+/* ================= 2.0 ESTIMATE DOCUMENT =================
+   One layout used everywhere: on the iPad, on the client's link, in the calculator preview, and on paper.
+   The client sees ONE price (permits folded in) — never materials, markup or hourly rates. */
+function scopeItems(text){
+  return String(text||'').split('\n').map(l=>l.replace(/^\s*(?:[-•*·]|\d+[.)])\s*/,'').trim()).filter(Boolean);
+}
+function scopeListHTML(text){
+  const items = scopeItems(text);
+  if(!items.length) return '';
+  if(items.length===1) return `<p class="est-p">${esc(items[0])}</p>`;
+  return `<ol class="est-ol">${items.map(i=>`<li>${esc(i)}</li>`).join('')}</ol>`;
+}
+function estimateScopeParts(e){
+  return [['Demolition',e.demo],['Construction & Installation',e.constr],['Electrical & Plumbing',e.ep],['Owner-Provided Items — supplied by the Owner, not included in the price',e.owner]]
+    .filter(x=>x[1] && String(x[1]).trim());
+}
+function estimateNumber(e){ return (e && e.id && e.id!=='preview') ? 'E-'+String(e.id).slice(-6).toUpperCase() : '(assigned when saved)'; }
+function estimateValidUntil(e){
+  try{ const d = new Date((e.date||todayStr())+'T12:00:00'); d.setDate(d.getDate()+30); return d.toISOString().slice(0,10); }catch(err){ return ''; }
+}
+const EST_DOC_CSS = `<style>
+  .est-doc{font-size:13.5px;line-height:1.5;color:#2A261E;}
+  .est-doc .est-head{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:2px solid #7A6A45;padding-bottom:10px;margin-bottom:12px;}
+  .est-doc .est-co{font-weight:700;font-size:15px;letter-spacing:.02em;color:#7A6A45;}
+  .est-doc .est-small{font-size:11px;color:#6B6455;}
+  .est-doc .est-title{font-size:18px;font-weight:700;letter-spacing:.06em;margin:2px 0 0;}
+  .est-doc .est-meta{text-align:right;font-size:12px;line-height:1.6;}
+  .est-doc .est-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;margin:0 0 6px;}
+  .est-doc .est-k{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#6B6455;}
+  .est-doc .est-v{font-size:13.5px;}
+  .est-doc .est-h{font-size:12.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#7A6A45;border-bottom:1px solid #ddd;padding-bottom:3px;margin:16px 0 6px;}
+  .est-doc .est-sub{font-weight:700;font-size:13px;margin:8px 0 2px;}
+  .est-doc .est-ol{margin:2px 0 6px;padding-left:22px;} .est-doc .est-ol li{margin:2px 0;}
+  .est-doc .est-p{margin:2px 0 6px;}
+  .est-doc table.est-price{width:100%;border-collapse:collapse;margin:4px 0;}
+  .est-doc table.est-price td{padding:7px 6px;border-bottom:1px solid #ddd;vertical-align:top;}
+  .est-doc table.est-price tr.est-total td{font-weight:700;font-size:15px;border-top:2px solid #2A261E;border-bottom:none;}
+  .est-doc .est-box{border:1px solid #ddd;border-radius:6px;padding:4px 14px;background:#FBF9F4;}
+  .est-doc .est-box h4{font-size:12.5px;margin:8px 0 2px;}
+  .est-doc .est-box ul{margin:2px 0 6px;padding-left:20px;} .est-doc .est-box li{margin:2px 0;}
+  .est-doc .est-box p{margin:4px 0;}
+  .est-doc .est-terms{font-size:12px;color:#4a4436;}
+  .est-doc .est-terms p{margin:4px 0;}
+  .est-doc .est-accept{border:2px solid #7A6A45;border-radius:6px;padding:10px 14px;margin-top:16px;}
+  .est-doc img.est-sig{height:80px;margin-top:4px;}
+  @media (max-width:600px){ .est-doc .est-grid{grid-template-columns:1fr;} .est-doc .est-meta{text-align:left;} }
+  @media print{ .est-doc{font-size:12px;} .est-doc .est-h{margin-top:12px;} .est-doc .est-box, .est-doc .est-accept, .est-doc .est-price{break-inside:avoid;page-break-inside:avoid;} }
+</style>`;
+function estimateDocHTML(e, opts){
+  opts = opts || {};
+  const total = totalEstimate(e);
+  const kv = (k,v)=>`<div><div class="est-k">${k}</div><div class="est-v">${esc(v||'—')}</div></div>`;
+  const parts = estimateScopeParts(e);
+  const termsSlot = legalSlotSettings('estimate');
+  const terms = (termsSlot.mode==='pdf' && !opts.print) ? uploadedDocPreviewHTML(termsSlot, 260) : getEstimateDisclaimerHtml();
+  let sigBlock = '';
+  if(e.signedAt && e.signedOnPaper) sigBlock = `<p><b>Signed on paper</b> on ${fmtDateTime(e.signedAt)}. The signed paper copy is on file with GSB General Construction Inc.</p>`;
+  else if(e.signedAt && e.signature) sigBlock = `<img class="est-sig" src="${e.signature}"><div class="est-small">Signed by the Owner ${fmtDateTime(e.signedAt)}</div>`;
+  else if(opts.paper) sigBlock = paperSignatureBlockHTML({}, true);
+  return `${EST_DOC_CSS}<div class="est-doc">
+    <div class="est-head">
+      <div><div class="est-co">GSB GENERAL CONSTRUCTION INC.</div>
+        <div class="est-small">13311 SW 9th Pl, Davie, FL 33325 · 954-605-4746 · Office@gsbconstructions.com</div>
+        <div class="est-small">Florida License #CGC1539336</div>
+        <div class="est-title">PROJECT ESTIMATE</div></div>
+      <div class="est-meta"><b>Estimate #</b> ${esc(estimateNumber(e))}<br><b>Date:</b> ${fmtDate(e.date)}<br><b>Valid until:</b> ${fmtDate(estimateValidUntil(e))}</div>
+    </div>
+    <div class="est-grid">${kv('Prepared for',e.clientName)}${kv('Project',e.jobName)}${kv('Project address',e.address)}${kv('Phone',e.clientPhone)}${e.clientEmail?kv('Email',e.clientEmail):''}</div>
+
+    <div class="est-h">1. Scope of Work — exactly what we will do</div>
+    ${parts.length ? parts.map(x=>`<div class="est-sub">${esc(x[0])}</div>${scopeListHTML(x[1])}`).join('') : '<p class="est-p">Nothing noted.</p>'}
+
+    <div class="est-h">2. Your Price</div>
+    <table class="est-price">
+      <tr><td>Construction &amp; Installation<div class="est-small">All work listed in Section 1, including the permit applications</div></td><td style="text-align:right;white-space:nowrap;">${money(total)}</td></tr>
+      <tr class="est-total"><td>Total Price</td><td style="text-align:right;white-space:nowrap;">${money(total)}</td></tr>
+    </table>
+    <div class="est-small">Permit fees charged by the city or county are not included — see Section 4.</div>
+
+    <div class="est-h">3. What's Included / Not Included</div>
+    <div class="est-box">${parseLiteMarkup(getLegalDoc('estimate-included').content)}</div>
+
+    <div class="est-h">4. Permits — How They Work</div>
+    <div class="est-box">${parseLiteMarkup(getLegalDoc('estimate-permits').content)}</div>
+
+    <div class="est-h">5. Payments &amp; Next Steps</div>
+    <div class="est-box">${parseLiteMarkup(getLegalDoc('estimate-next').content)}</div>
+
+    <div class="est-h">6. Terms</div>
+    <div class="est-terms">${terms}</div>
+
+    <div class="est-accept">
+      <div style="font-weight:700;">ACCEPTANCE OF PRICE</div>
+      <div class="est-small" style="font-size:12px;color:#2A261E;">By signing, the Owner accepts the Total Price above for the Scope of Work in Section 1 and agrees to move forward to the Construction Contract. This estimate is not the construction contract.</div>
+      ${sigBlock}
+    </div>
+  </div>`;
+}
+function estimatePrintBody(e, paper){ return estimateDocHTML(e, {print:true, paper:!!paper}); }
+function estimateHasPaperScans(e){ return estimateScansFor(e).length>0; }
+function estimateScansFor(e){
+  for(const cl of DB.clients){ const pr=(cl.projects||[]).find(p=>p.estimateId===e.id); if(pr && pr.signedEstimateScans){ pr.signedEstimateScans.forEach(f=>{ FILE_REGISTRY[f.id]=f; }); return pr.signedEstimateScans; } }
+  return [];
+}
+function contractForEstimate(e){ return e ? DB.contracts.find(c=>c.estimateId===e.id) : null; }
+function newContractFromEstimate(e){
+  const total = totalEstimate(e);
+  return { id:uid(), estimateId:e.id, onsiteId:e.onsiteId||null, dateCreated:nowISO(), date:todayStr(), status:'locked', autoBuilt:true,
+    jobName:e.jobName||'', clientName:e.clientName, clientPhone:e.clientPhone, clientEmail:e.clientEmail, address:e.address, demo:e.demo, constr:e.constr, ep:e.ep, owner:e.owner||'',
+    pricing:paymentSchedule(total), county:guessCounty(e.address), payLabels:Object.assign({}, payLabelsFor({demo:e.demo})), photoReleaseOptOut:false,
+    signature:null, signedAt:null, pageInitials:{}, sentRemote:false, sentRemoteAt:null };
+}
+function printEstimateAndContract(e, c){
+  const cs = legalSlotSettings('construction');
+  if(!c || (cs.mode==='pdf' && cs.dataUrl)){
+    printDocument('Estimate — '+e.clientName, estimatePrintBody(e, !e.signedAt));
+    if(c) alert('Your construction contract is an uploaded file, so it prints separately — open the contract and tap Print for Paper Signing.');
+    return;
+  }
+  printDocument('Estimate & Contract — '+e.clientName, `<div style="page-break-after:always;break-after:page;">${estimatePrintBody(e, !e.signedAt)}</div>` + contractPrintBody(c, c.status!=='signed'));
+}
+function docsReadyView(d){
+  const e = DB.estimates.find(x=>x.id===d.estimateId);
+  if(!e) return `<div class="modal-head"><h2 class="page-title" style="margin:0">Documents</h2><button class="close-x" data-action="close-modal">×</button></div><div class="subtle">This estimate was deleted.</div>`;
+  const c = contractForEstimate(e);
+  const st = (signed, paper)=> signed ? `<span class="tag reviewed">SIGNED${paper?' ON PAPER':''}</span>` : `<span class="tag pending">NOT SIGNED YET</span>`;
+  const card = (title, sub, statusHtml, btns)=>`<div class="card" style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;"><div><div style="font-family:'Oswald',sans-serif;font-size:16px;">${title}</div><div class="subtle" style="margin:2px 0 0;">${sub}</div></div>${statusHtml}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">${btns}</div></div>`;
+  return `<div class="modal-head"><h2 class="page-title" style="margin:0">Estimate & Contract — ${esc(e.clientName)}</h2><button class="close-x" data-action="close-modal">×</button></div>
+    <div class="banner-note">✓ Both documents are ready${e.jobName?' for <b>'+esc(e.jobName)+'</b>':''}. Total: <b>${money(totalEstimate(e))}</b>.<br>
+      Have the client sign on the iPad (open each one), send them a link, or print both and have them sign on paper. For paper: after they sign, open each document → <b>Signed on paper instead?</b> → take a photo of each page → <b>Mark as Signed on Paper</b>.</div>
+    <div style="display:flex;justify-content:flex-end;margin:4px 0 14px;"><button class="btn" data-action="print-both" data-id="${e.id}">🖨 Print Both for Signing</button></div>
+    ${card('1. Project Estimate', 'The price — short and simple (about 2 pages).', st(!!e.signedAt, e.signedOnPaper),
+      `<button class="btn small" data-action="view-estimate" data-id="${e.id}">Open / Sign on iPad</button>
+       <button class="btn ghost small" data-action="print-estimate-paper" data-id="${e.id}">🖨 Print Estimate</button>
+       ${!e.signedAt ? `<button class="btn ghost small" data-action="send-remote-estimate" data-id="${e.id}">Send Link to Client</button>` : ''}`)}
+    ${c ? card('2. Construction Contract', 'Full scope, terms, payment schedule and signatures (6 pages).', st(c.status==='signed', c.signedOnPaper),
+      `<button class="btn small" data-action="view-contract" data-id="${c.id}">Open / Sign on iPad</button>
+       <button class="btn ghost small" data-action="print-contract-paper" data-id="${c.id}">🖨 Print Contract</button>
+       ${c.status!=='signed' ? `<button class="btn ghost small" data-action="send-remote-contract" data-id="${c.id}">Send Link to Client</button>` : ''}`)
+      : card('2. Construction Contract', 'Not built yet.', '', `<button class="btn small" data-action="make-contract-now" data-id="${e.id}">Build Contract Now</button>`)}`;
+}
+
 /* ---- Estimate builder + signature ---- */
 function estimateForm(d){
   return `<div class="modal-head"><h2 class="page-title" style="margin:0">Build Estimate</h2><button class="close-x" data-action="close-modal">×</button></div>
@@ -4976,16 +5128,17 @@ function estimateForm(d){
       <div class="field"><label>Client Email</label><input id="e-clientEmail" value="${esc(d.clientEmail)}"></div>
     </div>
     <div class="section-label">Scope of Work</div>
+    <div class="subtle" style="margin-bottom:8px;">List exactly what we will do — <b>one item per line</b>. Each line shows as its own numbered item on the estimate and contract. Example: "Remove existing tile floor in kitchen (about 180 sq ft)".</div>
     <div class="field"><label>Demolition</label><textarea id="e-demo">${esc(d.demo)}</textarea></div>
     <div class="field"><label>Construction & Installation</label><textarea id="e-constr">${esc(d.constr)}</textarea></div>
     <div class="field"><label>Electrical & Plumbing</label><textarea id="e-ep">${esc(d.ep)}</textarea></div>
-    <div class="field"><label>Owner-Provided Items</label><textarea id="e-owner">${esc(d.owner)}</textarea></div>
+    <div class="field"><label>Owner-Provided Items (the Owner buys these — not in the price)</label><textarea id="e-owner">${esc(d.owner)}</textarea></div>
     <div class="section-label">Estimated Pricing</div>
     <div class="form-grid">
       <div class="field"><label>Permitting ($)</label><input id="e-p-permit" type="number" value="${d.pricing.permit}"></div>
       <div class="field"><label>Construction & Installation ($)</label><input id="e-p-constr" type="number" value="${d.pricing.constr}"></div>
     </div>
-    <div style="display:flex;justify-content:flex-end;gap:8px;"><button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn" data-action="save-estimate" data-onsite="${d.onsiteId||''}">Save Estimate</button></div>`;
+    <div style="display:flex;justify-content:flex-end;gap:8px;"><button class="btn ghost" data-action="close-modal">Cancel</button><button class="btn" data-action="save-estimate" data-onsite="${d.onsiteId||''}">Save — Build Estimate & Contract</button></div>`;
 }
 
 function estimatesListView(){
@@ -4996,7 +5149,8 @@ function estimatesListView(){
         <div class="main"><b>${esc(e.clientName)}</b> <span style="color:var(--muted);font-size:13px"> — ${esc(e.jobName)}</span>
           <div class="meta">${fmtDate(e.date)} &nbsp;·&nbsp; Total ${money(totalEstimate(e))}</div></div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <span class="tag ${e.status==='signed'?'reviewed':'pending'}">${e.status==='signed'?'SIGNED':'AWAITING SIGNATURE'}</span>
+          <span class="tag ${e.status==='signed'?'reviewed':'pending'}">${e.status==='signed'?(e.signedOnPaper?'SIGNED ON PAPER':'SIGNED'):'AWAITING SIGNATURE'}</span>
+          ${contractForEstimate(e) ? `<button class="btn ghost small" data-action="open-docs-ready" data-id="${e.id}">📄 Estimate & Contract</button>` : ''}
           <button class="btn ghost small" data-action="del-estimate" data-id="${e.id}">Delete</button>
           <button class="btn ghost small" data-action="view-estimate" data-id="${e.id}">Open</button>
         </div>
@@ -5006,7 +5160,7 @@ function estimatesListView(){
 
 const ESTIMATE_EMAIL_SUBJECT = 'Your Project Estimate — Ready to Sign — GSB General Construction Inc';
 function estimateEmailBody(e, signLink){
-  return `Hi ${e.clientName},\n\nYour project estimate for ${e.address} is ready for your review and signature.\n\nPLEASE READ: This estimate covers the scope of work described in the document. The pricing shown is the finalized price for that scope of work. All permit applications are included. Permit fees charged by the city or county are not included and are the Owner's responsibility. If change orders are added to the project, or if the price of materials is different, the price may change. This estimate is valid for 30 days from the date listed on it only; after that date it is no longer valid and the pricing may change.\n\nIf you sign this document, you are agreeing to the price shown and you are okay with moving on to the next step in the process. A formal contract will follow.\n\nPlease open the link below to review and sign it online. You can draw your signature with your finger or type your name:\n${signLink}\n\nTotal Estimated Price: ${money(totalEstimate(e))}\n\nIf you have any questions, call us at 954-605-4746.\n\nThank you for choosing GSB General Construction Inc.`;
+  return `Hi ${e.clientName},\n\nYour project estimate for ${e.address} is ready for your review and signature.\n\nTotal Price: ${money(totalEstimate(e))}\nValid until: ${fmtDate(estimateValidUntil(e))}\n\nPLEASE READ: This estimate covers the scope of work listed in the document. The price shown is the finalized price for that scope of work. If change orders are added to the project, or if the price of materials is different, the price may change. This estimate is valid for 30 days from the date listed on it only; after that date it is no longer valid and the pricing may change.\n\nPERMITS: We prepare and submit all permit applications — that is included in the price. Permit fees charged by the city or county are not included and are the Owner's responsibility. The estimate explains this in the section "Permits — How They Work".\n\nIf you sign this estimate, you are agreeing to the price shown and you are okay with moving on to the next step: the construction contract, which has the full terms and the payment schedule.\n\nPlease open the link below to review and sign it online. You can draw your signature with your finger or type your name:\n${signLink}\n\nIf you have any questions, call us at 954-605-4746.\n\nThank you for choosing GSB General Construction Inc.`;
 }
 function estimatePricingTableHTML(e){
   // Permitting/license/inspections are folded into Construction & Installation so the client sees one price
@@ -5034,6 +5188,11 @@ function payLabelsFor(c){
 }
 const PERMIT_NOTE_TEXT = 'All permit applications are included in the contract price. Permit fees charged by the city or county are not included and are paid by the Owner.';
 function contractScopeHTML(c){
+  if(c && c.status!=='signed'){
+    const parts2 = estimateScopeParts(c);
+    const note2 = `<div class="subtle" style="margin-top:10px;"><b>Permits:</b> ${esc(PERMIT_NOTE_TEXT)}</div>`;
+    return `<div class="section-label">Scope of Work</div>${EST_DOC_CSS}<div class="est-doc">` + (parts2.length ? parts2.map(x=>`<div class="est-sub">${esc(x[0])}</div>${scopeListHTML(x[1])}`).join('') : '<p class="est-p">Nothing noted</p>') + `</div>` + note2;
+  }
   const parts = [['Demolition',c.demo],['Construction & Installation',c.constr],['Electrical & Plumbing',c.ep]].filter(x=>x[1] && String(x[1]).trim());
   const note = `<div class="subtle" style="margin-top:10px;"><b>Permits:</b> ${esc(PERMIT_NOTE_TEXT)}</div>`;
   if(!parts.length) return notesSection('Scope of Work','') + note;
@@ -5117,8 +5276,9 @@ function printDocument(title, bodyHtml){
   }<\/script></body></html>`);
   w.document.close();
 }
-function paperSignatureBlockHTML(c){
+function paperSignatureBlockHTML(c, ownerOnly){
   const line = (label, w)=>`<div style="display:inline-block;width:${w}px;border-bottom:1px solid #000;height:28px;vertical-align:bottom;"></div><span style="font-size:11px;margin:0 14px 0 6px;">${label}</span>`;
+  if(ownerOnly) return `<div style="margin-top:6px;line-height:3;"><div>${line('Owner signature',290)}${line('Date',110)}</div><div>${line('Owner print name',290)}</div></div>`;
   return `<div style="margin-top:14px;line-height:3;">
       <p style="margin:0;font-weight:bold;">OWNER</p>
       <div>${line('Signature',300)}${line('Date',110)}</div>
@@ -5142,7 +5302,9 @@ function contractPrintBody(c, paper){
         ${c.jobName?cell('Job Name',c.jobName):''}${cell('Owner Name',c.clientName)}${cell('Owner Phone',c.clientPhone)}${cell('Project Address',c.address)}${cell('Contract Date',fmtDate(c.date))}
       </div>
       <h4 style="margin:16px 0 4px;text-transform:uppercase;color:#7A6A45;font-size:12px;border-bottom:2px solid #ddd;padding-bottom:3px;">Scope of Work</h4>
-      ${scopeParts.length ? scopeParts.map(x=>`<div style="font-weight:bold;font-size:12px;margin:10px 0 3px;">${x[0]}</div><div style="background:#EEE9DC;border:1px solid #ddd;border-radius:6px;padding:10px 14px;white-space:pre-wrap;font-size:13px;line-height:1.6;">${esc(x[1])}</div>`).join('') : '<p>Nothing noted</p>'}
+      ${c.status!=='signed'
+        ? `${EST_DOC_CSS}<div class="est-doc">` + (estimateScopeParts(c).length ? estimateScopeParts(c).map(x=>`<div class="est-sub">${esc(x[0])}</div>${scopeListHTML(x[1])}`).join('') : '<p>Nothing noted</p>') + `</div>`
+        : (scopeParts.length ? scopeParts.map(x=>`<div style="font-weight:bold;font-size:12px;margin:10px 0 3px;">${x[0]}</div><div style="background:#EEE9DC;border:1px solid #ddd;border-radius:6px;padding:10px 14px;white-space:pre-wrap;font-size:13px;line-height:1.6;">${esc(x[1])}</div>`).join('') : '<p>Nothing noted</p>')}
       <p style="margin-top:14px;font-size:12.5px;"><b>Permits:</b> ${esc(PERMIT_NOTE_TEXT)}</p>
       <p style="margin-top:18px;"><b>Total Contract Price: ${money(c.pricing.total)}</b> &nbsp;<span style="font-size:11px;color:#6B6455;">(the payment schedule is on the last page)</span></p>
       ${(paper && !c.signedOnPaper && !c.signature) ? `<div class="page-initials"><span>Owner has read and initialed this page:</span><b>____________</b></div>` : ''}
@@ -5171,28 +5333,30 @@ function contractPrintBody(c, paper){
 
 function estimateDetailView(e){
   const p = perms();
+  const c = contractForEstimate(e);
+  const scans = e.signedOnPaper ? estimateScansFor(e) : [];
   return `
     <div class="modal-head"><h2 class="page-title" style="margin:0">Estimate — ${esc(e.clientName)}</h2><div style="display:flex;gap:8px;align-items:center;"><button class="btn ghost small" data-action="del-estimate" data-id="${e.id}">Delete</button><button class="close-x" data-action="close-modal">×</button></div></div>
     ${!e.signedAt ? lockBanner(e) : ''}
-    <div style="border:1px solid var(--line);border-radius:8px;padding:22px;background:#fff;">
-      <div class="mono" style="font-size:11px;color:var(--muted);">13311 SW 9th Pl, Davie, FL 33325 | 954-605-4746 | Office@gsbconstructions.com</div>
-      <div style="font-size:10.5px;color:var(--muted);margin-bottom:12px;">Florida License #CGC1539336</div>
-      <h3 class="disp" style="font-size:17px;">PROJECT ESTIMATE</h3>
-      <div class="detail-grid" style="margin-bottom:12px;">${dg('Job Name',e.jobName)}${dg('Date',fmtDate(e.date))}${dg('Client',e.clientName)}${dg('Phone',e.clientPhone)}${dg('Address',e.address)}${dg('Email',e.clientEmail)}</div>
-      ${notesSection('Demolition', e.demo)}${notesSection('Construction & Installation', e.constr)}${notesSection('Electrical & Plumbing', e.ep)}
-      <div class="section-label">Estimated Pricing</div>
-      ${estimatePricingTableHTML(e)}
-      ${legalSlotSettings('estimate').mode==='pdf' ? uploadedDocPreviewHTML(legalSlotSettings('estimate'), 260) : `<div class="subtle" style="margin-top:12px;">${getEstimateDisclaimerHtml()}</div>`}
+    <div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin:0 0 10px;">
+      <button class="btn ghost small" data-action="open-docs-ready" data-id="${e.id}">📄 Estimate &amp; Contract</button>
+      <button class="btn ghost small" data-action="print-estimate-paper" data-id="${e.id}">🖨 ${e.signedAt?'Print':'Print for Paper Signing'}</button>
+      ${c ? `<button class="btn ghost small" data-action="print-both" data-id="${e.id}">🖨 Print Both</button>` : ''}
     </div>
+    <div style="border:1px solid var(--line);border-radius:8px;padding:22px;background:#fff;">${estimateDocHTML(e)}</div>
     ${e.signedAt ? `
-      <div class="section-label">Client Signature — Captured</div>
-      <img src="${e.signature}" style="border:1px solid var(--line);border-radius:6px;background:#fff;height:100px;">
-      <div class="subtle">Signed ${fmtDateTime(e.signedAt)}</div>
-      ${!DB.contracts.find(c=>c.estimateId===e.id) ? `<div style="margin-top:16px;display:flex;justify-content:flex-end;"><button class="btn" data-action="build-contract" data-id="${e.id}">Build Contract From This Estimate</button></div>` :
-      `<div style="margin-top:16px;display:flex;justify-content:flex-end;"><button class="btn ghost" data-action="view-contract" data-id="${DB.contracts.find(c=>c.estimateId===e.id).id}">View Contract</button></div>`}
+      ${e.signedOnPaper ? `<div class="section-label">Signed on Paper — Photos of the Signed Estimate</div>
+        <div class="photo-grid">${scans.map(f=>planCardHTML(f,false)).join('') || '<span class="subtle">No photos found.</span>'}</div>
+        <div class="subtle">Signed on paper ${fmtDateTime(e.signedAt)}. The photos are also saved under the client's project.</div>`
+      : `<div class="section-label">Client Signature — Captured</div>
+        <img src="${e.signature}" style="border:1px solid var(--line);border-radius:6px;background:#fff;height:100px;">
+        <div class="subtle">Signed ${fmtDateTime(e.signedAt)}</div>`}
+      ${!c ? `<div style="margin-top:16px;display:flex;justify-content:flex-end;"><button class="btn" data-action="build-contract" data-id="${e.id}">Build Contract From This Estimate</button></div>` :
+      `<div style="margin-top:16px;display:flex;justify-content:flex-end;"><button class="btn ghost" data-action="view-contract" data-id="${c.id}">View Contract${c.status==='signed'?' ✓ Signed':''}</button></div>`}
     ` : `
+      ${c ? `<div class="banner-note" style="margin-top:12px;">The construction contract for this estimate is already built${c.status==='signed'?' and signed':''}. <button class="btn ghost small" data-action="view-contract" data-id="${c.id}">Open Contract</button></div>` : ''}
       ${e.sentRemote ? `<div class="banner-note">✓ Sent for remote signature ${fmtDateTime(e.sentRemoteAt)} to ${esc(e.clientEmail||'client email on file')}. They can open the link from their email and sign on any phone or computer — no account needed. <button class="btn ghost small" style="margin-top:6px;" data-action="copy-estimate-sign-link" data-id="${e.id}">Copy Signing Link</button> <button class="btn ghost small" style="margin-top:6px;" data-action="send-remote-estimate" data-id="${e.id}">Send Again</button></div>` : `
-      <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+      <div style="display:flex;justify-content:flex-end;margin:12px 0 10px;">
         <button class="btn ghost small" data-action="send-remote-estimate" data-id="${e.id}">Send for Remote Signature</button>
       </div>`}
       <div class="section-label">Client Acceptance — Sign On-Site</div>
@@ -5201,6 +5365,15 @@ function estimateDetailView(e){
         <button class="btn ghost small" data-action="clear-sig" data-canvas="sig-estimate">Clear</button>
         <button class="btn" data-action="sign-estimate" data-id="${e.id}">Capture Signature & Accept</button>
       </div>
+      <div class="section-label" style="margin-top:26px;">Signed on paper instead?</div>
+      <div class="subtle" style="margin-bottom:8px;">1) Tap <b>Print for Paper Signing</b> above. 2) Client signs at the bottom. 3) Take a photo of each page here. 4) Tap <b>Mark as Signed on Paper</b>. The photos are saved with the client's project.</div>
+      <div id="paper-photos" class="photo-grid"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center;">
+        <button type="button" class="btn ghost small" id="paper-cam-btn">📷 Take Photo</button><input type="file" id="paper-cam-in" accept="image/*" capture="environment" style="display:none;">
+        <button type="button" class="btn ghost small" id="paper-up-btn">⬆ Upload Photos</button><input type="file" id="paper-up-in" accept="image/*" multiple style="display:none;">
+        <span id="photo-status" class="subtle"></span>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:6px;"><button class="btn" data-action="sign-estimate-paper" data-id="${e.id}">Mark as Signed on Paper</button></div>
     `}
   `;
 }
@@ -5229,11 +5402,11 @@ function contractsListView(){
     </div>
     <div class="section-label">Contracts</div>` : '';
   return readyHtml + `<div class="card" style="padding:8px 20px;">
-    ${list.length===0 ? emptyState('No contracts yet', ready.length ? 'Tap "Build Contract" on a signed estimate above.' : 'Contracts are built once an estimate is signed.') : list.map(c=>`
+    ${list.length===0 ? emptyState('No contracts yet', ready.length ? 'Tap "Build Contract" on a signed estimate above.' : 'A contract is built automatically each time you save an estimate.') : list.map(c=>`
       <div class="list-row">
         <div class="main"><b>${esc(c.clientName)}</b>${c.jobName?` <span style="color:var(--muted);font-size:13px"> — ${esc(c.jobName)}</span>`:''}<div class="meta">${fmtDate(c.date)} &nbsp;·&nbsp; Total ${money(c.pricing.total)}</div></div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <span class="tag ${c.status==='signed'?'reviewed':c.status==='locked'?'category':'pending'}">${c.status.toUpperCase()}</span>
+          <span class="tag ${c.status==='signed'?'reviewed':c.status==='locked'?'category':'pending'}">${c.status==='signed'?(c.signedOnPaper?'SIGNED ON PAPER':'SIGNED'):'READY TO SIGN'}</span>
           <button class="btn ghost small" data-action="view-contract" data-id="${c.id}">Open</button>
           <button class="btn ghost small" data-action="del-contract" data-id="${c.id}">Delete</button>
         </div>
@@ -5551,7 +5724,7 @@ function renderPricingCalculatorPage(){
       <span id="pc-save-status" class="subtle" style="margin-right:auto;align-self:center;">${pcSavedText(pb)}</span>
       <button class="btn ghost" data-action="close-calculator">Back to Worksheet</button>
       <button class="btn ghost" data-action="save-calculation">💾 Save Calculation</button>
-      <button class="btn" data-pricing-action="use-total">Save & Build Estimate</button>
+      <button class="btn" data-pricing-action="use-total">Save & Build Estimate + Contract</button>
     </div>
     <div class="subtle" style="text-align:right;margin-top:6px;">Everything you enter here saves automatically to this job.</div>`}`;
 }
@@ -5565,20 +5738,14 @@ function customerDocsHTML(f, pb){
   const e = estimateFromWorksheet(f, pb);
   const total = totalEstimate(e);
   const pay = paymentSchedule(total);
-  const c = { clientName:e.clientName, clientPhone:e.clientPhone, address:e.address, jobName:e.jobName, date:todayStr(), demo:e.demo, constr:e.constr, ep:e.ep, pricing:pay, pageInitials:{} };
+  const c = { clientName:e.clientName, clientPhone:e.clientPhone, address:e.address, jobName:e.jobName, date:todayStr(), demo:e.demo, constr:e.constr, ep:e.ep, owner:f.owner, pricing:pay, pageInitials:{} };
   const hdr = `<div class="mono" style="font-size:11px;color:var(--muted);">13311 SW 9th Pl, Davie, FL 33325 | 954-605-4746 | Office@gsbconstructions.com</div>
       <div style="font-size:10.5px;color:var(--muted);margin-bottom:12px;">Florida License #CGC1539336</div>`;
   return `<div class="section-label">1. The Estimate</div>
     <div style="border:1px solid var(--line);border-radius:8px;padding:22px;background:#fff;">
-      ${hdr}
-      <h3 class="disp" style="font-size:17px;">PROJECT ESTIMATE</h3>
-      <div class="detail-grid" style="margin-bottom:12px;">${dg('Job Name',e.jobName)}${dg('Date',fmtDate(e.date))}${dg('Client',e.clientName)}${dg('Phone',e.clientPhone)}${dg('Address',e.address)}${dg('Email',e.clientEmail)}</div>
-      ${notesSection('Demolition', e.demo)}${notesSection('Construction & Installation', e.constr)}${notesSection('Electrical & Plumbing', e.ep)}
-      <div class="section-label">Estimated Pricing</div>
-      ${estimatePricingTableHTML(e)}
-      ${legalSlotSettings('estimate').mode==='pdf' ? uploadedDocPreviewHTML(legalSlotSettings('estimate'), 260) : `<div class="subtle" style="margin-top:12px;">${getEstimateDisclaimerHtml()}</div>`}
+      ${estimateDocHTML(Object.assign({}, e, {owner:f.owner}))}
     </div>
-    <div class="section-label">2. The Contract (built from the estimate)</div>
+    <div class="section-label">2. The Contract (built at the same time as the estimate)</div>
     <div style="border:1px solid var(--line);border-radius:8px;padding:22px;background:#fff;">
       ${hdr}
       <h3 class="disp" style="font-size:17px;">CONSTRUCTION CONTRACT AGREEMENT</h3>
@@ -5592,16 +5759,16 @@ function scopeTextarea(label, action, val){
   return `<div class="field" style="margin-bottom:8px;"><label>${label}</label><textarea data-pricing-action="${action}" rows="3" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--line);border-radius:5px;font:inherit;">${esc(val||'')}</textarea></div>`;
 }
 function customerViewHTML(f, pb){
-  return `<div class="banner-note" style="margin:10px 0;">👁 This is exactly what your customer will see — first the Estimate, then the Contract that gets built from it. Your materials, markup, store names, permit/inspection breakdown and hourly rates are NOT shown to them. Nothing is sent from this screen.</div>
+  return `<div class="banner-note" style="margin:10px 0;">👁 This is exactly what your customer will see — first the Estimate, then the Contract (both are built together when you save). Your materials, markup, store names, permit/inspection breakdown and hourly rates are NOT shown to them. Nothing is sent from this screen.</div>
     <div class="card" style="margin-bottom:12px;">
       <div style="font-weight:700;margin-bottom:4px;">✏️ Scope of Work — type here and the preview below updates</div>
-      <div class="subtle" style="margin-bottom:8px;">Changes save to this job's worksheet automatically.</div>
+      <div class="subtle" style="margin-bottom:8px;">List exactly what we will do — <b>one item per line</b> (each line becomes a numbered item). Changes save to this job's worksheet automatically.</div>
       ${scopeTextarea('Demolition','set-scope-demo',f.demo)}${scopeTextarea('Construction & Installation','set-scope-constr',f.constr)}${scopeTextarea('Electrical & Plumbing','set-scope-ep',f.ep)}
     </div>
     <div id="cv-docs">${customerDocsHTML(f, pb)}</div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap;">
       <button class="btn ghost" data-pricing-action="pc-view" data-view="edit">← Back to Calculator</button>
-      <button class="btn" data-pricing-action="use-total">Save & Build Estimate</button>
+      <button class="btn" data-pricing-action="use-total">Save & Build Estimate + Contract</button>
     </div>`;
 }
 function linkViewHTML(f, pb){
@@ -5623,7 +5790,7 @@ function linkViewHTML(f, pb){
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap;">
       <button class="btn ghost" data-pricing-action="pc-view" data-view="edit">← Back to Calculator</button>
       <button class="btn ghost" data-pricing-action="pc-view" data-view="customer">👁 Customer View</button>
-      <button class="btn" data-pricing-action="use-total">Save & Build Estimate</button>
+      <button class="btn" data-pricing-action="use-total">Save & Build Estimate + Contract</button>
     </div>`;
 }
 function ensureSketches(f){
@@ -6213,6 +6380,12 @@ function contractDetailView(c){
       ${contractScopeHTML(c)}
       ${isPdfMode ? `<div class="section-label">Contract Document</div>${uploadedDocPreviewHTML(constructionSettings, 420)}` : ''}
     </div>
+    ${(()=>{ const est = c.estimateId ? DB.estimates.find(x=>x.id===c.estimateId) : null; if(!est) return '';
+      return `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:flex-end;margin-top:10px;">
+        <span class="subtle" style="margin:0;">Estimate: ${est.signedAt?'✓ signed'+(est.signedOnPaper?' on paper':''):'not signed yet'}</span>
+        <button class="btn ghost small" data-action="view-estimate" data-id="${est.id}">Open Estimate</button>
+        ${c.status!=='signed' ? `<button class="btn ghost small" data-action="print-both" data-id="${est.id}">🖨 Print Both</button>` : ''}
+      </div>`; })()}
     ${c.status==='signed' ? `
       ${(!isPdfMode && !c.signedOnPaper) ? `<div class="section-label">Full Agreement (Sections 1–25) — As Signed</div>${contractPagesReadHTML(c, false)}` : ''}
       ${paymentSectionHTML(c, false)}
@@ -6240,6 +6413,7 @@ function contractDetailView(c){
         ${contractPagesReadHTML(c, true)}
       `}
       ${paymentSectionHTML(c, true)}
+      <div class="field chk" style="margin:4px 0 10px;"><input type="checkbox" data-action="toggle-photo-release" data-id="${c.id}" ${c.photoReleaseOptOut?'checked':''}> Owner opts OUT of photo/marketing release (Section 23)</div>
       <div class="field" style="margin:6px 0 10px;"><label>County where the job is (used for permits in the contract)</label>
         <div style="display:flex;gap:8px;flex-wrap:wrap;"><input id="c-county-edit" list="county-list" value="${esc(contractCounty(c))}" style="flex:1;min-width:200px;">${COUNTY_DATALIST}<button class="btn small" data-action="save-county" data-id="${c.id}">Save County</button></div></div>
       <div class="section-label">Owner Signature</div>
@@ -6330,6 +6504,7 @@ function projectCardHTML(c, pr, opts){
         ${pr.estimateId ? `<button class="btn ghost small" data-action="view-project-estimate" data-id="${pr.estimateId}">Estimate${(()=>{const es=DB.estimates.find(x=>x.id===pr.estimateId); return es&&es.signedAt?' ✓ Signed '+fmtDate(es.signedAt):'';})()}</button>` : ''}
         ${pr.contractId ? `<button class="btn ghost small" data-action="view-project-contract" data-id="${pr.contractId}">Contract${(()=>{const ct=DB.contracts.find(x=>x.id===pr.contractId); return ct&&ct.signedAt?' ✓ Signed '+fmtDate(ct.signedAt):'';})()}</button>` : ''}
       </div>` : ''}
+      ${(pr.signedEstimateScans||[]).length ? `<div class="section-label" style="margin-top:12px;">Signed Estimate — Paper Copy (${pr.signedEstimateScans.length} photo${pr.signedEstimateScans.length===1?'':'s'})</div><div class="photo-grid">${pr.signedEstimateScans.map(f=>planCardHTML(f,false)).join('')}</div>` : ''}
       ${(pr.signedContractScans||[]).length ? `<div class="section-label" style="margin-top:12px;">Signed Contract — Paper Copy (${pr.signedContractScans.length} photo${pr.signedContractScans.length===1?'':'s'})</div><div class="photo-grid">${pr.signedContractScans.map(f=>planCardHTML(f,false)).join('')}</div>` : ''}
       ${changeOrdersSectionHTML(c, pr, p)}
       ${p.stageToggle ? `<div class="stage-controls">
@@ -6553,6 +6728,7 @@ function renderLegalDocs(){
   const sub = getLegalDoc('sub-agreement');
   const vendor = getLegalDoc('vendor-agreement');
   const estimate = getLegalDoc('estimate');
+  const estimateParts = ['estimate-included','estimate-permits','estimate-next'].map(id=>getLegalDoc(id));
   return `
     <h1 class="page-title">Contract Templates</h1>
     ${(()=>{ const ej = legalSlotSettings('emailjs'); return `
@@ -6593,7 +6769,11 @@ function renderLegalDocs(){
     <div class="card">${legalSlotBlock('estimate', legalSlotSettings('estimate'), 'Terms/disclaimer text shown at the bottom of every estimate. Client info, scope, and pricing still show automatically above it.', ()=>`
       <div class="list-row"><div class="main"><b>${esc(estimate.label)}</b><div class="meta">${esc(firstLine(estimate.content))}…</div></div>
       <button class="btn ghost small" data-action="open-legal-edit" data-id="${estimate.id}">Edit</button></div>
-    `)}</div>
+    `)}
+    <div class="subtle" style="margin:12px 0 4px;">These sections also print on every estimate (above the terms). Edit them anytime:</div>
+    ${estimateParts.map(d=>`<div class="list-row"><div class="main"><b>${esc(d.label)}</b><div class="meta">${esc(firstLine(d.content))}…</div></div>
+      <button class="btn ghost small" data-action="open-legal-edit" data-id="${d.id}">Edit</button></div>`).join('')}
+    </div>
   `;
 }
 function legalSlotBlock(slot, slotSettings, textModeDescription, textModeRowsFn){
@@ -6799,6 +6979,7 @@ function renderModal(){
   if(m.type==='vendor-form') inner = vendorForm();
   if(m.type==='estimate-form') inner = estimateForm(m.data);
   if(m.type==='estimate-detail') inner = estimateDetailView(m.data);
+  if(m.type==='docs-ready') inner = docsReadyView(m.data);
   if(m.type==='contract-form') inner = contractForm(m.data);
   if(m.type==='new-material-form') inner = newMaterialForm(m.data);
   if(m.type==='new-client-form') inner = newClientForm();
@@ -6988,7 +7169,9 @@ Office@gsbconstructions.com`);
   document.querySelectorAll('[data-action="del-estimate"]').forEach(el=>el.addEventListener('click', ()=>{
     const e = DB.estimates.find(x=>x.id===el.dataset.id);
     if(!e) return;
-    if(!confirm(`Delete the estimate for ${e.clientName}? This can't be undone.`)) return;
+    const linkedC = DB.contracts.find(c=>c.estimateId===e.id && c.status!=='signed');
+    if(!confirm(`Delete the estimate for ${e.clientName}?${linkedC?' Its contract (not signed yet) will be deleted too.':''} This can't be undone.`)) return;
+    if(linkedC){ DB.contracts = DB.contracts.filter(x=>x.id!==linkedC.id); deleteRecord('contracts', linkedC.id); }
     const idToDelete = e.id;
     DB.estimates = DB.estimates.filter(x=>x.id!==idToDelete);
     deleteRecord('estimates', idToDelete);
@@ -7053,7 +7236,10 @@ Office@gsbconstructions.com`);
       signature:null, signedAt:null, lockAt: computeLockAt(ts), submittedAt: ts };
     DB.estimates.push(est);
     if(onsiteId){ const f=DB.onsite.find(x=>x.id===onsiteId); if(f){ f.status='reviewed'; await saveRecord('onsite', f); } }
-    await saveRecord('estimates', est); STATE.modal=null; render();
+    await saveRecord('estimates', est);
+    const ctr = newContractFromEstimate(est);           // 2.0: the contract is built right away, so both can be printed / signed in one visit
+    DB.contracts.push(ctr); await saveRecord('contracts', ctr);
+    STATE.modal = {type:'docs-ready', data:{estimateId:est.id}}; render();
   });
 
   document.querySelectorAll('[data-action="view-estimate"]').forEach(el=>el.addEventListener('click', ()=>{
@@ -7065,6 +7251,47 @@ Office@gsbconstructions.com`);
     e.signature = getSignatureDataUrl('sig-estimate'); e.signedAt = nowISO(); e.status='signed';
     await saveRecord('estimates', e);
     await attachSignedEstimateToProject(e);
+    await v2ArchiveEstimateIfContractSigned(e);
+    STATE.modal = {type:'estimate-detail', data:e}; render();
+  });
+
+  // ---- 2.0: estimate printing / paper signing / both documents ----
+  document.querySelectorAll('[data-action="open-docs-ready"]').forEach(el=>el.addEventListener('click', ()=>{ STATE.modal = {type:'docs-ready', data:{estimateId:el.dataset.id}}; render(); }));
+  document.querySelectorAll('[data-action="print-estimate-paper"]').forEach(el=>el.addEventListener('click', ()=>{
+    const e = DB.estimates.find(x=>x.id===el.dataset.id); if(!e) return;
+    printDocument('Estimate — '+e.clientName, estimatePrintBody(e, !e.signedAt));
+  }));
+  document.querySelectorAll('[data-action="print-both"]').forEach(el=>el.addEventListener('click', ()=>{
+    const e = DB.estimates.find(x=>x.id===el.dataset.id); if(!e) return;
+    printEstimateAndContract(e, contractForEstimate(e));
+  }));
+  bindClick('make-contract-now', async (el)=>{
+    const e = DB.estimates.find(x=>x.id===el.dataset.id); if(!e || contractForEstimate(e)) return;
+    const ctr = newContractFromEstimate(e); DB.contracts.push(ctr); await saveRecord('contracts', ctr);
+    STATE.modal = {type:'docs-ready', data:{estimateId:e.id}}; render();
+  });
+  document.querySelectorAll('[data-action="toggle-photo-release"]').forEach(el=>el.addEventListener('change', async ()=>{
+    const c = DB.contracts.find(x=>x.id===el.dataset.id); if(!c || c.status==='signed') return;
+    c.photoReleaseOptOut = el.checked; await saveRecord('contracts', c); showToast(el.checked ? '✓ Photo release: owner opted out' : '✓ Photo release: included');
+  }));
+  bindClick('sign-estimate-paper', async (el)=>{
+    const e = DB.estimates.find(x=>x.id===el.dataset.id); if(!e) return;
+    const arr = (STATE.paperScans && STATE.paperScans.cid===e.id) ? STATE.paperScans.arr : [];
+    if(!arr.length){ alert('Please add at least one photo of the signed estimate first (use Take Photo or Upload Photos).'); return; }
+    if(!confirm('Mark this estimate as SIGNED ON PAPER using '+arr.length+' photo'+(arr.length===1?'':'s')+'? The photos are saved with the client\'s project.')) return;
+    const scans = arr.map((p,i)=>({ id:p.id, kind:'estimate', name:'Signed estimate (paper) — photo '+(i+1), mime:'image/jpeg', dataUrl:p.dataUrl, dateAdded:todayStr(), addedBy: STATE.user ? STATE.user.first : '' }));
+    e.signature = ''; e.signedOnPaper = true; e.paperScanCount = scans.length; e.signedAt = nowISO(); e.status = 'signed';
+    await saveRecord('estimates', e);
+    try{
+      const r = ensureEstimateProject(DB.clients, e);
+      if(r.isNew) DB.clients.push(r.client);
+      const pr = (r.client.projects||[]).find(x=>x.estimateId===e.id);
+      if(pr){ pr.signedEstimateScans = scans; pr.estimateSigned = true; }
+      await saveRecord('clients', r.client);
+    }catch(err){ console.error('saving estimate scans failed', err); }
+    await v2ArchiveEstimateIfContractSigned(e);
+    STATE.paperScans = null;
+    pushNotification(`Estimate for ${e.clientName} signed on paper.`);
     STATE.modal = {type:'estimate-detail', data:e}; render();
   });
   bindClick('send-remote-estimate', async (el)=>{
@@ -7900,6 +8127,9 @@ function ensureEstimateProject(clients, e){
     primaryPhone:e.clientPhone||'', secondaryPhone:'', email:e.clientEmail||'', preferredContact:'Call', howHeard:'', referredBy:'', notes:'', projects:[project] };
   return {client, changed:true, isNew:true};
 }
+async function v2ArchiveEstimateIfContractSigned(e){
+  try{ const c = contractForEstimate(e); if(c && c.status==='signed' && !e.archived){ e.archived = true; await saveRecord('estimates', e); } }catch(err){}
+}
 async function attachSignedEstimateToProject(e){
   try{
     const r = ensureEstimateProject(DB.clients, e);
@@ -7950,7 +8180,7 @@ async function autoCreateOrAttachClient(contract, scans){
   const linkedOnsite = contract.onsiteId ? DB.onsite.find(o=>o.id===contract.onsiteId) : null;
   if(linkedOnsite && !linkedOnsite.archived){ linkedOnsite.archived = true; await saveRecord('onsite', linkedOnsite); }
   const linkedEstimate = contract.estimateId ? DB.estimates.find(e=>e.id===contract.estimateId) : null;
-  if(linkedEstimate && !linkedEstimate.archived){ linkedEstimate.archived = true; await saveRecord('estimates', linkedEstimate); }
+  if(linkedEstimate && !linkedEstimate.archived && linkedEstimate.signedAt){ linkedEstimate.archived = true; await saveRecord('estimates', linkedEstimate); }   // 2.0: an unsigned estimate stays in the list as a reminder
   const liveContract = DB.contracts.find(x=>x.id===contract.id);
   if(liveContract && !liveContract.archived){ liveContract.archived = true; await saveRecord('contracts', liveContract); }
 }
@@ -8005,6 +8235,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-b</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-c</div>
 </body>
 </html>
