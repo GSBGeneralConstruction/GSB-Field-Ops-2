@@ -280,7 +280,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.12-j';
+const APP_VERSION = 'v2.0-2026.11.12-k';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -3123,7 +3123,7 @@ function sk2Open(plan, readOnly, onSave, ctx){
   sk2SyncRooms(plan);
   let tapeOn = true; try{ tapeOn = localStorage.getItem('gsb2-sk2-tape')!=='0'; }catch(e){}
   STATE.sk2 = { plan, readOnly:!!readOnly, onSave, ctx: ctx||null, tool: readOnly ? 'select' : 'draw', view:{s:2, ox:0, oy:0},
-    sel:null, picks:[], undo:[], dirty:false, stroke:null, pointers:new Map(), drag:null, pinch:null, lastBox:SK2_BOX_PRESETS[0], tapeOn, boxField:'w' };
+    sel:null, multi:null, areaDraw:null, copyId:sk2Uid(), clip:null, picks:[], undo:[], dirty:false, stroke:null, pointers:new Map(), drag:null, pinch:null, lastBox:SK2_BOX_PRESETS[0], tapeOn, boxField:'w' };
   sk2BuildDom();
   sk2Fit();
   sk2Draw(); sk2Panel();
@@ -3195,13 +3195,16 @@ function sk2BuildDom(){
     <div class="t">✏️ Sketch</div>
     <div class="sk2-totals" id="sk2-totals"></div>
     ${S.readOnly ? '' : `<button class="sk2-btn ${S.tapeOn?'on':''}" data-sk2="tape" title="Bluetooth tape measure (keyboard mode)">📏 Tape ${S.tapeOn?'ON':'OFF'}</button>
-    <button class="sk2-btn" data-sk2="undo">↶ Undo</button>`}
+    <button class="sk2-btn" data-sk2="undo">↶ Undo</button>
+    <button class="sk2-btn" data-sk2="copy" title="Copy what's selected">⧉ Copy</button>
+    <button class="sk2-btn" data-sk2="paste" title="Paste what you copied">📋 Paste</button>
+    <button class="sk2-btn" data-sk2="clearall" title="Clear everything off the sketch">🗑 Clear all</button>`}
     <button class="sk2-btn" data-sk2="fit">⤢ Fit</button>
     ${S.readOnly ? `<button class="sk2-btn primary" data-sk2="close">Close</button>` : `<button class="sk2-btn" data-sk2="cancel">Cancel</button><button class="sk2-btn primary" data-sk2="save">Save</button>`}
   </div>
   <div class="sk2-body">
     ${S.readOnly ? '' : `<div class="sk2-tools">
-      ${toolBtn('draw','✏️','Draw walls')}${toolBtn('select','👆','Select / move')}${toolBtn('door','🚪','Door')}${toolBtn('window','🪟','Window')}
+      ${toolBtn('draw','✏️','Draw walls')}${toolBtn('select','👆','Select / move')}${toolBtn('area','⬚','Select area')}${toolBtn('door','🚪','Door')}${toolBtn('window','🪟','Window')}
       ${toolBtn('box','⬛','Box')}${toolBtn('column','<span style="color:#D32F2F">■</span>','Column')}${toolBtn('note','📝','Note')}${toolBtn('dim','↔️','Measuring line')}${toolBtn('pick','📐','Add up LF')}
     </div>`}
     <div class="sk2-canvas-wrap"><canvas id="sk2-canvas"></canvas><div class="sk2-hint" id="sk2-hint"></div><div class="sk2-toast" id="sk2-toast"></div>
@@ -3213,7 +3216,7 @@ function sk2BuildDom(){
   cv.addEventListener('pointerdown', sk2Down); cv.addEventListener('pointermove', sk2Move);
   cv.addEventListener('pointerup', sk2Up); cv.addEventListener('pointercancel', sk2Up);
   cv.addEventListener('wheel', (e)=>{ e.preventDefault(); sk2ZoomAt(e.offsetX, e.offsetY, e.deltaY<0 ? 1.12 : 1/1.12); }, {passive:false});
-  root.querySelectorAll('[data-sk2-tool]').forEach(b=>b.addEventListener('click', ()=>{ S.tool = b.dataset.sk2Tool; S.dimStart = null; if(S.tool!=='pick') S.picks = []; if(S.tool==='pick'){ S.sel = null; } sk2Draw(); sk2Panel(); }));
+  root.querySelectorAll('[data-sk2-tool]').forEach(b=>b.addEventListener('click', ()=>{ S.tool = b.dataset.sk2Tool; S.dimStart = null; if(S.tool!=='area') S.multi = null; if(S.tool!=='pick') S.picks = []; if(S.tool==='pick'){ S.sel = null; } sk2Draw(); sk2Panel(); }));
   root.querySelectorAll('[data-sk2]').forEach(b=>b.addEventListener('click', ()=>sk2TopAction(b.dataset.sk2)));
   const tape = root.querySelector('#sk2-tape');
   let tTimer = null;
@@ -3229,6 +3232,13 @@ function sk2DocKey(e){
   const S = STATE.sk2; if(!S || S.readOnly) return;
   const a = document.activeElement;
   if(a && (a.tagName==='INPUT' || a.tagName==='TEXTAREA' || a.tagName==='SELECT')) return;
+  if((e.metaKey || e.ctrlKey) && !e.altKey){
+    const k = (e.key||'').toLowerCase();
+    if(k==='c'){ e.preventDefault(); sk2Copy(); return; }
+    if(k==='v'){ e.preventDefault(); sk2Paste(); return; }
+    if(k==='a'){ e.preventDefault(); sk2SelectAll(); return; }
+  }
+  if((e.key==='Delete' || e.key==='Backspace') && S.multi){ e.preventDefault(); sk2PanelAction('mdel'); return; }
   if(e.key==='Enter'){ if(_sk2KeyBuf){ e.preventDefault(); sk2TapeCommit(_sk2KeyBuf); _sk2KeyBuf=''; } return; }
   if(e.key && e.key.length===1 && /[0-9'"\/\. ftinm-]/i.test(e.key)){
     _sk2KeyBuf += e.key; clearTimeout(_sk2KeyTimer);
@@ -3299,13 +3309,14 @@ function sk2Draw(target){
     ctx.stroke();
   }
   const plan = S.plan, sel = target ? null : S.sel;
+  const M = target ? null : S.multi, inM = (k, id)=> !!(M && M[k] && M[k].includes(id));
   const wallPx = Math.max(3, 4.5*view.s);
   const rooms = sk2SyncRooms(plan);
   // room fills (every area the walls close off)
   rooms.forEach(r=>{
     const f = r._f; ctx.beginPath();
     [f.pts].concat(f.holes).forEach(poly=>{ poly.forEach((p,i)=>{ const q = W2S(p); i ? ctx.lineTo(q.x,q.y) : ctx.moveTo(q.x,q.y); }); ctx.closePath(); });
-    ctx.fillStyle = (sel && sel.kind==='room' && sel.rid===r.id) ? 'rgba(46,92,138,0.16)' : 'rgba(122,106,69,0.06)'; ctx.fill('evenodd');
+    ctx.fillStyle = ((sel && sel.kind==='room' && sel.rid===r.id) || inM('rooms', r.id)) ? 'rgba(46,92,138,0.16)' : 'rgba(122,106,69,0.06)'; ctx.fill('evenodd');
   });
   // walls with openings cut out
   plan.shapes.forEach(sh=>{
@@ -3317,7 +3328,7 @@ function sk2Draw(target){
       const at = (t)=>W2S({x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t});
       let t = 0; const pieces = [];
       ops.forEach(x=>{ if(x.t0 > t) pieces.push([t, x.t0]); t = Math.max(t, x.t1); }); if(t < 1) pieces.push([t,1]);
-      const isSel = sel && sel.kind==='wall' && sel.sid===sh.id && sel.seg===i;
+      const isSel = (sel && sel.kind==='wall' && sel.sid===sh.id && sel.seg===i) || inM('shapes', sh.id);
       const isPick = S.picks.some(p=>p.sid===sh.id && p.seg===i) || (!target && S.dimStart && S.dimStart.sid===sh.id && S.dimStart.seg===i);
       ctx.lineCap = 'square'; ctx.lineWidth = wallPx; ctx.strokeStyle = isSel ? '#1F6FD1' : isPick ? '#D9822B' : '#2A261E';
       pieces.forEach(([u,v])=>{ const p = at(u), q = at(v); ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); });
@@ -3326,7 +3337,7 @@ function sk2Draw(target){
       let nrm = {x:-dir.y, y:dir.x};
       if(cen){ const mid = {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; if(sk2V.dot(sk2V.sub(cen, mid), nrm) < 0) nrm = {x:-nrm.x, y:-nrm.y}; }   // points into the room
       ops.forEach(({o, t0, t1})=>{
-        const p = at(t0), q = at(t1), osel = sel && sel.kind==='opening' && sel.id===o.id;
+        const p = at(t0), q = at(t1), osel = (sel && sel.kind==='opening' && sel.id===o.id) || inM('shapes', sh.id);
         ctx.strokeStyle = osel ? '#1F6FD1' : '#2A261E';
         if(o.type==='window'){
           const off = wallPx*0.35;
@@ -3366,7 +3377,7 @@ function sk2Draw(target){
   if(!target){ ctx.fillStyle = '#2A261E'; plan.shapes.forEach(sh=>sh.pts.forEach(p=>{ const q = W2S(p); ctx.beginPath(); ctx.arc(q.x,q.y, Math.max(1.5, wallPx*0.5), 0, Math.PI*2); ctx.fill(); })); }
   // boxes (cabinets, appliances…)
   plan.boxes.forEach(bx=>{
-    const c = W2S(bx), isSel = sel && sel.kind==='box' && sel.id===bx.id;
+    const c = W2S(bx), isSel = (sel && sel.kind==='box' && sel.id===bx.id) || inM('boxes', bx.id);
     ctx.save(); ctx.translate(c.x, c.y); ctx.rotate((bx.ang||0)*Math.PI/180);
     const w = bx.w*view.s, h = bx.d*view.s;
     ctx.fillStyle = '#F1EBDC'; ctx.strokeStyle = isSel ? '#1F6FD1' : '#7A6A45'; ctx.lineWidth = isSel ? 2.5 : 1.5;
@@ -3379,7 +3390,7 @@ function sk2Draw(target){
   });
   // columns (red) — on a wall they sit inside it and move with it
   plan.columns.forEach(co=>{
-    const pos = sk2ColPos(plan, co), c = W2S(pos), isSel = sel && sel.kind==='column' && sel.id===co.id;
+    const pos = sk2ColPos(plan, co), c = W2S(pos), isSel = (sel && sel.kind==='column' && sel.id===co.id) || inM('columns', co.id);
     ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(pos.ang);
     ctx.fillStyle = '#D32F2F'; ctx.strokeStyle = isSel ? '#1F6FD1' : '#8E1B1B'; ctx.lineWidth = isSel ? 3 : 1.2;
     const along = Math.max(5, co.size*view.s), across = pos.onWall ? wallPx : Math.max(5, co.size*view.s);
@@ -3389,7 +3400,7 @@ function sk2Draw(target){
   // measuring lines (wall to wall)
   (plan.dims||[]).forEach(d=>{
     const g = sk2DimGeom(plan, d); if(!g) return;
-    const A = W2S(g.A), B = W2S(g.B), isSel = sel && sel.kind==='dim' && sel.id===d.id;
+    const A = W2S(g.A), B = W2S(g.B), isSel = (sel && sel.kind==='dim' && sel.id===d.id) || inM('dims', d.id);
     const st = d.val==null ? 'est' : Math.abs(g.cur - d.val) < 0.15 ? 'ok' : 'off';
     const col = isSel ? '#1F6FD1' : st==='off' ? '#B3261E' : '#2E5C8A';
     ctx.strokeStyle = col; ctx.lineWidth = isSel ? 2.5 : 1.6; ctx.setLineDash([7,4]);
@@ -3415,13 +3426,26 @@ function sk2Draw(target){
   });
   // notes
   plan.notes.forEach(nt=>{
-    const c = W2S(nt), isSel = sel && sel.kind==='note' && sel.id===nt.id;
+    const c = W2S(nt), isSel = (sel && sel.kind==='note' && sel.id===nt.id) || inM('notes', nt.id);
     ctx.font = '600 13px Inter, sans-serif'; ctx.textAlign='left'; ctx.textBaseline='top';
     const lines = String(nt.text||'').split('\n'); const w = Math.max(...lines.map(l=>ctx.measureText(l).width)) + 10, h = lines.length*16 + 6;
     ctx.fillStyle = 'rgba(255,248,200,0.95)'; ctx.strokeStyle = isSel ? '#1F6FD1' : '#D6C46A'; ctx.lineWidth = isSel ? 2 : 1;
     ctx.fillRect(c.x, c.y, w, h); ctx.strokeRect(c.x, c.y, w, h);
     ctx.fillStyle = '#3d3520'; lines.forEach((l,i)=>ctx.fillText(l, c.x+5, c.y+4+i*16));
   });
+  // drag-to-select box, and the dashed outline around what's selected
+  if(!target && S.areaDraw){
+    const a = W2S(S.areaDraw.a), b2 = W2S(S.areaDraw.b);
+    ctx.setLineDash([5,4]); ctx.strokeStyle = '#1F6FD1'; ctx.lineWidth = 1.5; ctx.fillStyle = 'rgba(31,111,209,0.07)';
+    ctx.fillRect(Math.min(a.x,b2.x), Math.min(a.y,b2.y), Math.abs(b2.x-a.x), Math.abs(b2.y-a.y)); ctx.strokeRect(Math.min(a.x,b2.x), Math.min(a.y,b2.y), Math.abs(b2.x-a.x), Math.abs(b2.y-a.y)); ctx.setLineDash([]);
+  }
+  if(M){
+    const bb = sk2SetBounds(plan, M);
+    if(bb){ const a = W2S({x:bb.x0, y:bb.y0}), b2 = W2S({x:bb.x1, y:bb.y1}), pad = 12;
+      ctx.setLineDash([8,5]); ctx.strokeStyle = '#1F6FD1'; ctx.lineWidth = 2; ctx.strokeRect(a.x-pad, a.y-pad, b2.x-a.x+pad*2, b2.y-a.y+pad*2); ctx.setLineDash([]);
+      const txt = sk2SetCount(M)+' selected — drag to move'; ctx.font = '600 12px Inter, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+      const tw = ctx.measureText(txt).width + 10; ctx.fillStyle = '#1F6FD1'; ctx.fillRect(a.x-pad, a.y-pad-20, tw, 18); ctx.fillStyle = '#fff'; ctx.fillText(txt, a.x-pad+5, a.y-pad-4.5); }
+  }
   // the box being dragged out
   if(!target && S.boxDraw){
     const a = W2S(S.boxDraw.a), b2 = W2S(S.boxDraw.b);
@@ -3449,6 +3473,7 @@ function sk2Status(){
   const tips = {
     draw: S.plan.shapes.length ? 'Draw more walls (one line at a time works too), or TAP a wall to measure it' : 'Draw a room with your finger — in one go or one wall at a time',
     select:'Tap a wall, room or item · drag items to move · drag the background to pan · pinch to zoom',
+    area: S.multi ? 'Drag inside the dashed box to move it all · tap outside to unselect · ⧉ Copy / 📋 Paste up top' : 'Drag a box around walls, rooms and items to select them all at once · use two fingers to pan/zoom',
     door:'Tap on a wall to add a door', window:'Tap on a wall to add a window', box:'Drag to draw a box any size — or tap for a standard one',
     column:'Tap on a wall to put a column inside it (or anywhere for a free-standing one)', note:'Tap where the note goes', pick:'Tap walls to add up their linear feet',
     dim: S.dimStart ? 'Now tap the OTHER wall' : 'Tap one wall, then the wall across from it — a measuring line goes between them',
@@ -3519,6 +3544,11 @@ function sk2Down(e){
     const hp = sk2BoxHandle(S.plan.boxes.find(x=>x.id===S.sel.id));
     if(hp && sk2V.dist(p, hp) <= 20){ S.drag = { resize:S.sel.id, pushed:false }; return; }
   }
+  if(S.tool==='area' && !S.readOnly){
+    const w = sk2S2W(p);
+    if(S.multi){ const bb = sk2SetBounds(S.plan, S.multi), pad = 16/S.view.s; if(bb && w.x>=bb.x0-pad && w.x<=bb.x1+pad && w.y>=bb.y0-pad && w.y<=bb.y1+pad){ S.drag = { multi:true, start:w, pushed:false }; return; } }
+    S.areaDraw = { a:w, b:w }; return;
+  }
   if(S.tool==='draw' && !S.readOnly){ S.stroke = [sk2S2W(p)]; return; }
   if(S.tool==='box' && !S.readOnly){ const w0 = sk2S2W(p); S.boxDraw = { a:w0, b:w0 }; return; }
   if(S.tool==='select' && !S.readOnly){
@@ -3542,6 +3572,13 @@ function sk2Move(e){
   if(S.down && sk2V.dist(p, S.down.p) > 6) S.down.moved = true;
   if(S.stroke){ const w = sk2S2W(p); const last = S.stroke[S.stroke.length-1]; if(sk2V.dist(w,last)*S.view.s >= 2){ S.stroke.push(w); sk2Draw(); } return; }
   if(S.boxDraw){ S.boxDraw.b = sk2S2W(p); sk2Draw(); return; }
+  if(S.areaDraw){ S.areaDraw.b = sk2S2W(p); sk2Draw(); return; }
+  if(S.drag && S.drag.multi){
+    if(!S.down || !S.down.moved) return;
+    if(!S.drag.pushed){ sk2Push(); S.drag.pushed = true; }
+    const w = sk2S2W(p), d = sk2V.sub(w, S.drag.start); S.drag.start = w;
+    sk2MoveSet(S.plan, S.multi, d); S.dirty = true; sk2Draw(); return;
+  }
   if(S.drag && S.drag.resize){
     const b = S.plan.boxes.find(x=>x.id===S.drag.resize); if(!b) return;
     if(!S.drag.pushed){ sk2Push(); S.drag.pushed = true; }
@@ -3592,6 +3629,14 @@ function sk2Up(e){
     if(b.sized) sk2Toast('Box drawn '+sk2Fmt(b.w)+' × '+sk2Fmt(b.d)+' — pick what it is in the panel');
     return;
   }
+  if(S.areaDraw){
+    const ad = S.areaDraw; S.areaDraw = null;
+    if(tap){ const h = sk2Hit(p); S.multi = null; if(h) sk2Select(h); else { S.sel = null; sk2Draw(); sk2Panel(); } return; }
+    sk2SelectRect(ad.a, ad.b);
+    if(!S.multi) sk2Toast('Nothing inside that box — drag around the walls or items');
+    return;
+  }
+  if(S.drag && S.drag.multi){ S.drag = null; sk2Draw(); sk2Panel(); return; }
   if(S.stroke){
     const stroke = S.stroke; S.stroke = null;
     if(tap || stroke.length < 3){ sk2Select(sk2Hit(p)); return; }    // a tap while drawing selects (draw a room, then tap a wall to measure it)
@@ -3694,6 +3739,137 @@ function sk2AddStroke(stroke){
   }
   S.sel = null; sk2Draw(); sk2Panel();
 }
+/* ---- several things at once: drag a box to select, move them together, copy / paste ---- */
+const SK2_CLIP_KEY = 'gsb2-sk2-clip';
+function sk2EmptySet(){ return { shapes:[], boxes:[], columns:[], notes:[], dims:[], rooms:[] }; }
+function sk2SetCount(m){ return m ? m.shapes.length + m.boxes.length + m.columns.length + m.notes.length : 0; }
+/* add what belongs to the picked walls: their columns, measuring lines between them and the rooms they make */
+function sk2FinishSet(plan, m){
+  const sh = new Set(m.shapes);
+  plan.columns.forEach(c=>{ if(c.sid && sh.has(c.sid) && !m.columns.includes(c.id)) m.columns.push(c.id); });
+  m.columns = m.columns.filter(id=>{ const c = plan.columns.find(x=>x.id===id); return c && (!c.sid || sh.has(c.sid)); });
+  m.dims = (plan.dims||[]).filter(d=>sh.has(d.a.sid) && sh.has(d.b.sid)).map(d=>d.id);
+  m.rooms = sh.size ? sk2SyncRooms(plan).filter(r=>r._f && r._f.edges.length && r._f.edges.every(e=>sh.has(e.sid))).map(r=>r.id) : [];
+  return m;
+}
+function sk2SegHitsRect(a, b, r){
+  const inR = (p)=> p.x>=r.x0 && p.x<=r.x1 && p.y>=r.y0 && p.y<=r.y1;
+  if(inR(a) || inR(b)) return true;
+  let t0 = 0, t1 = 1; const dx = b.x-a.x, dy = b.y-a.y;
+  const P = [-dx, dx, -dy, dy], Q = [a.x-r.x0, r.x1-a.x, a.y-r.y0, r.y1-a.y];
+  for(let i=0;i<4;i++){
+    if(Math.abs(P[i]) < 1e-9){ if(Q[i] < 0) return false; continue; }
+    const t = Q[i]/P[i];
+    if(P[i] < 0){ if(t > t1) return false; if(t > t0) t0 = t; } else { if(t < t0) return false; if(t < t1) t1 = t; }
+  }
+  return true;
+}
+function sk2SetMulti(m){
+  const S = STATE.sk2;
+  S.multi = (m && sk2SetCount(m)) ? m : null; S.sel = null;
+  if(S.multi) S.tool = 'area';
+  sk2Draw(); sk2Panel();
+}
+/* everything the drag box touches */
+function sk2SelectRect(a, b){
+  const S = STATE.sk2, plan = S.plan, r = { x0:Math.min(a.x,b.x), y0:Math.min(a.y,b.y), x1:Math.max(a.x,b.x), y1:Math.max(a.y,b.y) };
+  const inR = (p)=> p.x>=r.x0 && p.x<=r.x1 && p.y>=r.y0 && p.y<=r.y1;
+  const m = sk2EmptySet();
+  plan.shapes.forEach(sh=>{ for(let i=0;i<sk2SegCount(sh);i++){ const [p,q] = sk2SegEnds(sh,i); if(sk2SegHitsRect(p,q,r)){ m.shapes.push(sh.id); break; } } });
+  plan.boxes.forEach(bx=>{ const hw = Math.max(bx.w, bx.d)/2; if(bx.x+hw>=r.x0 && bx.x-hw<=r.x1 && bx.y+hw>=r.y0 && bx.y-hw<=r.y1 && (inR(bx) || sk2SegHitsRect({x:bx.x-bx.w/2,y:bx.y},{x:bx.x+bx.w/2,y:bx.y},r) || sk2SegHitsRect({x:bx.x,y:bx.y-bx.d/2},{x:bx.x,y:bx.y+bx.d/2},r))) m.boxes.push(bx.id); });
+  plan.columns.forEach(c=>{ if(!c.sid && inR(sk2ColPos(plan, c))) m.columns.push(c.id); });
+  plan.notes.forEach(n=>{ if(inR(n)) m.notes.push(n.id); });
+  sk2SetMulti(sk2FinishSet(plan, m));
+}
+function sk2SelectAll(){
+  const S = STATE.sk2, plan = S.plan; if(S.readOnly) return;
+  const m = { shapes:plan.shapes.map(x=>x.id), boxes:plan.boxes.map(x=>x.id), columns:plan.columns.filter(c=>!c.sid).map(x=>x.id), notes:plan.notes.map(x=>x.id), dims:[], rooms:[] };
+  if(!sk2SetCount(m)){ sk2Toast('Nothing on the sketch yet'); return; }
+  sk2SetMulti(sk2FinishSet(plan, m));
+}
+function sk2SetBounds(plan, m){
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const add = (p)=>{ x0 = Math.min(x0,p.x); y0 = Math.min(y0,p.y); x1 = Math.max(x1,p.x); y1 = Math.max(y1,p.y); };
+  plan.shapes.forEach(s=>{ if(m.shapes.includes(s.id)) s.pts.forEach(add); });
+  plan.boxes.forEach(b=>{ if(m.boxes.includes(b.id)){ const hw = Math.max(b.w, b.d)/2; add({x:b.x-hw, y:b.y-hw}); add({x:b.x+hw, y:b.y+hw}); } });
+  plan.columns.forEach(c=>{ if(m.columns.includes(c.id)) add(sk2ColPos(plan, c)); });
+  plan.notes.forEach(n=>{ if(m.notes.includes(n.id)) add(n); });
+  return x0===Infinity ? null : { x0, y0, x1, y1 };
+}
+function sk2MoveSet(plan, m, d){
+  plan.shapes.forEach(s=>{ if(m.shapes.includes(s.id)) s.pts = s.pts.map(p=>sk2V.add(p, d)); });
+  plan.boxes.forEach(b=>{ if(m.boxes.includes(b.id)){ b.x += d.x; b.y += d.y; } });
+  plan.columns.forEach(c=>{ if(m.columns.includes(c.id) && !c.sid){ c.x += d.x; c.y += d.y; } });
+  plan.notes.forEach(n=>{ if(m.notes.includes(n.id)){ n.x += d.x; n.y += d.y; } });
+  (plan.rooms||[]).forEach(r=>{ if(m.rooms.includes(r.id)){ r.x += d.x; r.y += d.y; } });
+}
+function sk2DeleteSet(plan, m){
+  const sh = new Set(m.shapes);
+  plan.shapes = plan.shapes.filter(s=>!sh.has(s.id));
+  plan.openings = plan.openings.filter(o=>!sh.has(o.sid));
+  plan.columns = plan.columns.filter(c=>!m.columns.includes(c.id) && !(c.sid && sh.has(c.sid)));
+  plan.boxes = plan.boxes.filter(b=>!m.boxes.includes(b.id));
+  plan.notes = plan.notes.filter(n=>!m.notes.includes(n.id));
+  plan.dims = (plan.dims||[]).filter(d=>!sh.has(d.a.sid) && !sh.has(d.b.sid));
+  plan.rooms = (plan.rooms||[]).filter(r=>!m.rooms.includes(r.id));
+}
+/* what Copy takes: the drag-selection, or the one thing tapped (a room copies its walls, doors, windows and name) */
+function sk2CurrentSet(){
+  const S = STATE.sk2, plan = S.plan, sel = S.sel;
+  if(S.multi) return S.multi;
+  if(!sel) return null;
+  const m = sk2EmptySet();
+  if(sel.kind==='wall') m.shapes.push(sel.sid);
+  else if(sel.kind==='room'){ const r = sk2SyncRooms(plan).find(x=>x.id===sel.rid); if(r && r._f) [...new Set(r._f.edges.map(e=>e.sid))].forEach(id=>m.shapes.push(id)); }
+  else if(sel.kind==='box') m.boxes.push(sel.id);
+  else if(sel.kind==='column'){ const c = plan.columns.find(x=>x.id===sel.id); if(c && c.sid) m.shapes.push(c.sid); else m.columns.push(sel.id); }
+  else if(sel.kind==='note') m.notes.push(sel.id);
+  else if(sel.kind==='opening'){ const o = plan.openings.find(x=>x.id===sel.id); if(o) m.shapes.push(o.sid); }
+  else if(sel.kind==='dim'){ const d = (plan.dims||[]).find(x=>x.id===sel.id); if(d){ m.shapes.push(d.a.sid); if(d.b.sid!==d.a.sid) m.shapes.push(d.b.sid); } }
+  return sk2FinishSet(plan, m);
+}
+function sk2Copy(){
+  const S = STATE.sk2; if(!S || S.readOnly) return;
+  const plan = S.plan, m = sk2CurrentSet();
+  if(!m || !sk2SetCount(m)){ sk2Toast('Select something first — use ⬚ Select area to drag around things, or tap a room or item'); return; }
+  const sh = new Set(m.shapes), J = (x)=>JSON.parse(JSON.stringify(x));
+  const clip = { v:1,
+    shapes: J(plan.shapes.filter(s=>sh.has(s.id))), openings: J(plan.openings.filter(o=>sh.has(o.sid))),
+    columns: J(plan.columns.filter(c=>m.columns.includes(c.id))), boxes: J(plan.boxes.filter(b=>m.boxes.includes(b.id))),
+    notes: J(plan.notes.filter(n=>m.notes.includes(n.id))), dims: J((plan.dims||[]).filter(d=>m.dims.includes(d.id))),
+    rooms: (plan.rooms||[]).filter(r=>m.rooms.includes(r.id)).map(r=>({ name:r.name, x:r.x, y:r.y })) };
+  S.clip = clip; try{ localStorage.setItem(SK2_CLIP_KEY, JSON.stringify(clip)); }catch(e){}
+  const n = sk2SetCount(m); sk2Toast('⧉ Copied '+n+' thing'+(n===1?'':'s')+' — tap 📋 Paste');
+}
+function sk2Paste(){
+  const S = STATE.sk2; if(!S || S.readOnly) return;
+  let clip = S.clip; if(!clip){ try{ clip = JSON.parse(localStorage.getItem(SK2_CLIP_KEY)||'null'); }catch(e){} }
+  if(!clip || !(clip.shapes.length + clip.boxes.length + clip.columns.length + clip.notes.length)){ sk2Toast('Nothing copied yet — select something and tap ⧉ Copy'); return; }
+  const plan = S.plan, J = (x)=>JSON.parse(JSON.stringify(x)), ids = {}, nid = (old)=> ids[old] || (ids[old] = sk2Uid());
+  // where it goes: next to the original in the same sketch (each paste a bit further), or in the middle of the screen in another sketch
+  const tmp = { shapes:clip.shapes, boxes:clip.boxes, columns:clip.columns, notes:clip.notes };
+  const bb = sk2SetBounds(tmp, { shapes:clip.shapes.map(x=>x.id), boxes:clip.boxes.map(x=>x.id), columns:clip.columns.map(x=>x.id), notes:clip.notes.map(x=>x.id) }) || {x0:0,y0:0,x1:0,y1:0};
+  let d;
+  // goes just to the right of everything already drawn, so it never lands on top of other walls; an empty sketch gets it in the middle of the screen
+  const all = sk2SetBounds(plan, { shapes:plan.shapes.map(x=>x.id), boxes:plan.boxes.map(x=>x.id), columns:plan.columns.map(x=>x.id), notes:plan.notes.map(x=>x.id) });
+  if(all) d = { x:all.x1 + 36 - bb.x0, y:all.y0 - bb.y0 };
+  else { const cv = document.getElementById('sk2-canvas'); const c = sk2S2W({ x:(cv ? cv.clientWidth : 600)/2, y:(cv ? cv.clientHeight : 400)/2 }); d = { x:c.x - (bb.x0+bb.x1)/2, y:c.y - (bb.y0+bb.y1)/2 }; }
+  sk2Push();
+  const m = sk2EmptySet();
+  J(clip.shapes).forEach(s=>{ s.id = nid(s.id); s.pts = s.pts.map(p=>sk2V.add(p, d)); plan.shapes.push(s); m.shapes.push(s.id); });
+  J(clip.openings).forEach(o=>{ o.id = sk2Uid(); o.sid = nid(o.sid); plan.openings.push(o); });
+  J(clip.columns).forEach(c=>{ c.id = sk2Uid(); if(c.sid) c.sid = nid(c.sid); else { c.x += d.x; c.y += d.y; } plan.columns.push(c); m.columns.push(c.id); });
+  J(clip.boxes).forEach(b=>{ b.id = sk2Uid(); b.x += d.x; b.y += d.y; plan.boxes.push(b); m.boxes.push(b.id); });
+  J(clip.notes).forEach(n=>{ n.id = sk2Uid(); n.x += d.x; n.y += d.y; plan.notes.push(n); m.notes.push(n.id); });
+  if(!Array.isArray(plan.dims)) plan.dims = [];
+  J(clip.dims).forEach(x=>{ x.id = sk2Uid(); x.a.sid = nid(x.a.sid); x.b.sid = nid(x.b.sid); plan.dims.push(x); });
+  if(!Array.isArray(plan.rooms)) plan.rooms = [];
+  (clip.rooms||[]).forEach(r=>{ plan.rooms.push({ id:sk2Uid(), name:r.name, x:r.x + d.x, y:r.y + d.y, key:null }); });
+  S.dirty = true;
+  if(all) sk2Fit();
+  sk2SetMulti(sk2FinishSet(plan, m));
+  sk2Toast('📋 Pasted next to your drawing — drag it where you want it');
+}
 function sk2Push(){ const S = STATE.sk2; S.undo.push(JSON.stringify(S.plan)); if(S.undo.length > 60) S.undo.shift(); }
 function sk2Select(h){
   const S = STATE.sk2;
@@ -3786,7 +3962,14 @@ function sk2Panel(){
     : `<div class="sk2-tapebox off">Tape is OFF (top bar). Type the size below.</div>`);
   const lenInput = (id, val)=> ro ? '' : `<div class="sk2-field"><label>Type a size</label><div style="display:flex;gap:6px;"><input id="${id}" value="" placeholder="e.g. 12' 4 3/8&quot;  or  12 4" autocomplete="off"><button class="sk2-b main" data-sk2p="setlen" data-input="${id}">Set</button></div></div>`;
   let h = '';
-  if(S.tool==='pick' && !ro){
+  if(S.multi && !ro){
+    const m = S.multi, n = sk2SetCount(m), pl = (k, one, many)=> k ? k+' '+(k===1?one:many) : '';
+    const parts = [pl(m.rooms.length,'room','rooms'), pl(m.shapes.length,'wall line','wall lines'), pl(m.boxes.length,'box','boxes'), pl(m.columns.length,'column','columns'), pl(m.notes.length,'note','notes')].filter(Boolean).join(' · ');
+    h = `<h3>⬚ ${n} selected</h3><p class="sub">${parts}<br>Drag inside the dashed box to move them all together.</p>
+      <div class="sk2-row"><button class="sk2-b main" data-sk2p="mcopy">⧉ Copy</button><button class="sk2-b" data-sk2p="mpaste">📋 Paste</button></div>
+      <div class="sk2-row"><button class="sk2-b" data-sk2p="mall">Select everything</button><button class="sk2-b" data-sk2p="mnone">Unselect</button></div>
+      <div class="sk2-row"><button class="sk2-b warn" data-sk2p="mdel">🗑 Delete selected</button></div>`;
+  } else if(S.tool==='pick' && !ro){
     let tot = 0; S.picks.forEach(p=>{ const sh = plan.shapes.find(x=>x.id===p.sid); if(sh) tot += sk2SegLen(sh, p.seg) - sk2DoorWidthOn(plan, sh, p.seg); });
     h = `<h3>📐 Add up linear feet</h3><p class="sub">Tap walls on the sketch to add or remove them. Door openings are taken out.</p>
       <div class="sk2-big">${(tot/12).toFixed(1)} LF</div><div class="sub">${S.picks.length} wall${S.picks.length===1?'':'s'} picked · ${sk2Fmt(tot)}</div>
@@ -3848,6 +4031,9 @@ function sk2Panel(){
     const nt = plan.notes.find(x=>x.id===sel.id); if(!nt){ S.sel = null; return sk2Panel(); }
     h = `<h3>📝 Note</h3>${ro ? `<p>${esc(nt.text)}</p>` : `<div class="sk2-field"><textarea id="sk2-notetext" rows="3">${esc(nt.text)}</textarea></div>
       <div class="sk2-row"><button class="sk2-b main" data-sk2p="savenote">Save note</button><button class="sk2-b warn" data-sk2p="delitem">Delete</button></div>`}`;
+  } else if(S.tool==='area' && !ro){
+    h = `<h3>⬚ Select area</h3><p class="sub">Drag a box around walls, rooms and items to select them all in one go. Then drag them to move them together, or Copy, Paste or Delete them.<br><br>Tip: tapping one room or item also works with ⧉ Copy.</p>
+      <div class="sk2-row"><button class="sk2-b main" data-sk2p="mall">Select everything</button><button class="sk2-b" data-sk2p="mpaste">📋 Paste</button></div>`;
   } else {
     const t = sk2Totals(plan);
     h = `<h3>Totals</h3><div class="sk2-big">${t.sqft.toFixed(1)} sq ft</div><div class="sub">${t.lf.toFixed(1)} LF of walls (doors taken out)</div>
@@ -3865,6 +4051,11 @@ function sk2Panel(){
 }
 function sk2PanelAction(a, btn){
   const S = STATE.sk2, plan = S.plan, sel = S.sel;
+  if(a==='mcopy'){ sk2Copy(); return; }
+  if(a==='mpaste'){ sk2Paste(); return; }
+  if(a==='mall'){ sk2SelectAll(); return; }
+  if(a==='mnone'){ sk2SetMulti(null); return; }
+  if(a==='mdel'){ const m = S.multi; if(!m) return; sk2Push(); sk2DeleteSet(plan, m); S.multi = null; S.dirty = true; sk2Draw(); sk2Panel(); sk2Toast('Deleted — ↶ Undo brings it back'); return; }
   const shOf = ()=> sel && plan.shapes.find(x=>x.id===sel.sid);
   if(a==='setlen'){ const i = document.getElementById(btn.dataset.input||'sk2-len'); const L = sk2ParseLen(i && i.value); if(L==null){ sk2Toast('Type a size like 12\' 4 3/8" or 12 4'); return; } if(i) i.value=''; sk2ApplyLength(L); if(i) i.blur(); return; }
   if(a==='nextwall' || a==='prevwall'){ const sh = shOf(); const n = sk2SegCount(sh); S.sel = {kind:'wall', sid:sh.id, seg:(sel.seg + (a==='nextwall'?1:n-1)) % n}; sk2Draw(); sk2Panel(); sk2FocusTape(); return; }
@@ -3912,7 +4103,14 @@ function sk2PanelAction(a, btn){
 function sk2TopAction(a){
   const S = STATE.sk2;
   if(a==='fit'){ sk2Fit(); sk2Draw(); return; }
-  if(a==='undo'){ const prev = S.undo.pop(); if(!prev){ sk2Toast('Nothing to undo'); return; } S.plan = JSON.parse(prev); S.sel = null; S.picks = []; S.dirty = true; sk2Draw(); sk2Panel(); return; }
+  if(a==='copy'){ sk2Copy(); return; }
+  if(a==='paste'){ sk2Paste(); return; }
+  if(a==='clearall'){
+    const pl = S.plan; if(!pl.shapes.length && !pl.boxes.length && !pl.columns.length && !pl.notes.length && !(pl.dims||[]).length){ sk2Toast('The sketch is already empty'); return; }
+    if(!confirm('Clear everything off this sketch?\n\n(If you change your mind, tap ↶ Undo right after.)')) return;
+    sk2Push(); S.plan = sk2NewPlan(); S.sel = null; S.multi = null; S.picks = []; S.dimStart = null; S.dirty = true; sk2Draw(); sk2Panel(); sk2Toast('Sketch cleared — ↶ Undo brings it back'); return;
+  }
+  if(a==='undo'){ const prev = S.undo.pop(); if(!prev){ sk2Toast('Nothing to undo'); return; } S.plan = JSON.parse(prev); S.sel = null; S.multi = null; S.picks = []; S.dirty = true; sk2Draw(); sk2Panel(); return; }
   if(a==='tape'){
     S.tapeOn = !S.tapeOn; try{ localStorage.setItem('gsb2-sk2-tape', S.tapeOn?'1':'0'); }catch(e){}
     const b = document.querySelector('#sk2-root [data-sk2="tape"]'); if(b){ b.classList.toggle('on', S.tapeOn); b.textContent = '📏 Tape '+(S.tapeOn?'ON':'OFF'); }
@@ -10139,6 +10337,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-j</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-k</div>
 </body>
 </html>
