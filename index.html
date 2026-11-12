@@ -279,7 +279,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.12-e';
+const APP_VERSION = 'v2.0-2026.11.12-g';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -1509,18 +1509,30 @@ function bindPublicCopyButtons(title, fileBase){
         try{ await navigator.share({files:[f], title}); return; }
         catch(e){ if(e && e.name==='AbortError') return; help('Your printable copy is ready — tap <b>🖨 Print</b> once more, then choose <b>Print</b> in the menu.'); return; }
       }
+      if(f){ try{ saveFile(f); help('We saved a printable PDF: <b>'+esc(f.name)+'</b>. Open it from your downloads and tap the share button → <b>Print</b>.'); return; }catch(e){} }
       try{ window.print(); }catch(e){}
       return;
     }
-    // Computers and Android: the normal print window
-    let opened = false; const mark = ()=>{ opened = true; };
+    // Everything else: try the normal print window first. Browsers that really print tell us right away ("beforeprint").
+    let opened = false; const mark = ()=>{ opened = true; const h = document.getElementById('public-print-help'); if(h) h.style.display='none'; };
     window.addEventListener('beforeprint', mark);
     try{ window.print(); }catch(e){}
-    setTimeout(()=>{
-      window.removeEventListener('beforeprint', mark);
-      if(opened) return;
-      help('<b>Printing isn\'t available in this browser.</b> Tap <b>⬇ Download a Copy</b> to get a PDF you can print, or open this page in Chrome or Safari and tap Print again.');
-    }, 1500);
+    setTimeout(()=>window.removeEventListener('beforeprint', mark), 5000);
+    if(opened) return;
+    // No print window here (email-app browser, app view…): hand over a PDF straight away, while the tap still counts.
+    let f = (window.jspdf && window.jspdf.jsPDF) ? pdfFile() : null;
+    if(!f){ const html = publicCopyHTML(title); if(html) f = new File([new Blob([html], {type:'text/html'})], base+'.html', {type:'text/html'}); }
+    if(!f){ help('Could not make a printable copy. Please call GSB General Construction at 954-605-4746 and we will email you one.'); return; }
+    if((navigator.maxTouchPoints||0) > 0 && canShareFile(f)){
+      help('This browser can\'t print directly, so we made a PDF. In the menu that opens, tap <b>Print</b> (or save it, then print it).');
+      try{ await navigator.share({files:[f], title}); return; }catch(e){ if(e && e.name==='AbortError') return; }
+    }
+    try{
+      saveFile(f);
+      help('This browser can\'t print directly, so we saved a printable copy: <b>'+esc(f.name)+'</b>. Open it from your downloads and tap Print.');
+    }catch(e){
+      help('This browser can\'t print. Tap <b>⬇ Download a Copy</b>, open the file, and print it from there.');
+    }
   }));
   // Download
   document.querySelectorAll('[data-action="public-download"]').forEach(el=>el.addEventListener('click', async ()=>{
@@ -2413,7 +2425,7 @@ const SKETCH_LOGICAL_W = 1400, SKETCH_LOGICAL_H = 900, SKETCH_GRID_SIZE = 20;
 const SKETCH_UNITS = { ft:{label:'ft', toInches:12}, in:{label:'in', toInches:1}, cm:{label:'cm', toInches:0.393701}, mm:{label:'mm', toInches:0.0393701} };
 let sketchDragState = null;
 
-function openSketchEditor(existing, readOnly, onSave, ctx){
+function openSketchEditorLegacy(existing, readOnly, onSave, ctx){   // sketches made before 2.0 keep opening here
   let pages;
   if(existing && existing.pages && existing.pages.length){
     pages = JSON.parse(JSON.stringify(existing.pages));
@@ -2441,6 +2453,931 @@ function openSketchEditor(existing, readOnly, onSave, ctx){
   renderSketchOverlay();
   startSketchAutosave();
 }
+/* ================= SKETCH 2.0 — CORE (measurements, straightening, fitting, totals) =================
+   World units are INCHES. A plan is:
+   { v:2, shapes:[{id, pts:[{x,y}], closed, name, meas:{segIndex:inches}}], openings:[{id, sid, seg, t, w, type}],
+     boxes:[{id,x,y,w,d,ang,label}], columns:[{id,x,y,size,round}], notes:[{id,x,y,text}] } */
+function sk2NewPlan(){ return { v:2, shapes:[], openings:[], boxes:[], columns:[], notes:[] }; }
+function sk2Uid(){ return 'k'+Math.random().toString(36).slice(2,10); }
+
+/* ---- reading a length: the T1R types 12' 4 3/8" — also accepts 148 3/8", 12.5', 12 4, 3.76 m, 376 cm ---- */
+function sk2ParseLen(input){
+  let s = String(input==null?'':input).trim().toLowerCase();
+  if(!s) return null;
+  s = s.replace(/[’′‘`]/g,"'").replace(/[”″“]/g,'"').replace(/''/g,'"').replace(/,/g,'.').replace(/\s+/g,' ');
+  let m = s.match(/^(\d+(?:\.\d+)?)\s*(mm|cm|m)$/);
+  if(m){ const v = parseFloat(m[1]); return m[2]==='mm' ? v/25.4 : m[2]==='cm' ? v/2.54 : v*39.3700787; }
+  let feet = 0, hadFeet = false, hadInchMark = /"|\bin\b|inch/.test(s);
+  m = s.match(/(\d+(?:\.\d+)?)\s*(?:'|ft\b|feet\b|foot\b)/);
+  if(m){ feet = parseFloat(m[1]); hadFeet = true; s = (s.slice(0, m.index) + ' ' + s.slice(m.index + m[0].length)).trim(); }
+  s = s.replace(/"|\binches\b|\binch\b|\bin\b/g,' ').replace(/-/g,' ').replace(/\s+/g,' ').trim();
+  let inches = 0;
+  if(s && !hadFeet && !hadInchMark){
+    const parts = s.split(' ');
+    if(parts.length===2 && /^\d+(\.\d+)?$/.test(parts[0]) && /^\d+(\.\d+)?$/.test(parts[1])){ const v = parseFloat(parts[0])*12 + parseFloat(parts[1]); return v > 0 ? v : null; }
+  }
+  if(s){
+    m = s.match(/^(\d+(?:\.\d+)?)?(?:\s*(\d+)\/(\d+))?$/);
+    if(!m) return null;
+    const whole = m[1]!=null ? parseFloat(m[1]) : 0;
+    const frac = m[2]!=null ? (parseInt(m[3],10) ? parseInt(m[2],10)/parseInt(m[3],10) : NaN) : 0;
+    if(isNaN(frac)) return null;
+    if(m[1]==null && m[2]==null) return hadFeet ? feet*12 : null;
+    if(!hadFeet && !hadInchMark){
+      // bare numbers (typed by hand): "12" = 12 ft, "12.5" = 12.5 ft, "12 4" = 12 ft 4 in, "3/8" = inches
+      if(m[2]==null) return whole > 0 ? whole*12 : null;
+    }
+    inches = whole + frac;
+  }
+  const total = feet*12 + inches;
+  return total > 0 ? total : null;
+}
+function sk2Fmt(inches, approx){
+  if(inches==null || !isFinite(inches)) return '—';
+  let n = Math.round(inches*16);              // nearest 1/16"
+  const neg = n < 0; n = Math.abs(n);
+  let ft = Math.floor(n/(12*16)); n -= ft*12*16;
+  let whole = Math.floor(n/16), six = n - whole*16;
+  let frac = '';
+  if(six){ let num = six, den = 16; while(num%2===0){ num/=2; den/=2; } frac = num+'/'+den; }
+  const inPart = whole ? (frac ? whole+' '+frac : String(whole)) : (frac || '0');
+  const out = ft ? (ft+"' "+inPart+'"') : (inPart+'"');
+  return (approx ? '~' : '') + (neg ? '-' : '') + out;
+}
+function sk2FmtFt(inches){ return (inches/12).toFixed(1)+' ft'; }
+
+/* ---- vector helpers ---- */
+const sk2V = {
+  sub:(a,b)=>({x:a.x-b.x, y:a.y-b.y}), add:(a,b)=>({x:a.x+b.x, y:a.y+b.y}), mul:(a,k)=>({x:a.x*k, y:a.y*k}),
+  len:(a)=>Math.hypot(a.x,a.y), dist:(a,b)=>Math.hypot(a.x-b.x,a.y-b.y), dot:(a,b)=>a.x*b.x+a.y*b.y,
+  norm:(a)=>{ const l = Math.hypot(a.x,a.y)||1; return {x:a.x/l, y:a.y/l}; },
+};
+function sk2SegCount(sh){ return sh.closed ? sh.pts.length : sh.pts.length-1; }
+function sk2SegEnds(sh, i){ return [sh.pts[i], sh.pts[(i+1)%sh.pts.length]]; }
+function sk2SegLen(sh, i){ const [a,b] = sk2SegEnds(sh,i); return sk2V.dist(a,b); }
+function sk2PointSegDist(p, a, b){
+  const ab = sk2V.sub(b,a), l2 = sk2V.dot(ab,ab); if(!l2) return {d:sk2V.dist(p,a), t:0};
+  let t = sk2V.dot(sk2V.sub(p,a), ab)/l2; t = Math.max(0, Math.min(1, t));
+  return { d: sk2V.dist(p, sk2V.add(a, sk2V.mul(ab,t))), t };
+}
+
+/* ---- straightening a freehand stroke into walls ---- */
+function sk2RDP(pts, eps){
+  if(pts.length < 3) return pts.slice();
+  let idx = -1, max = 0; const a = pts[0], b = pts[pts.length-1];
+  for(let i=1;i<pts.length-1;i++){ const d = sk2PointSegDist(pts[i], a, b).d; if(d > max){ max = d; idx = i; } }
+  if(max <= eps) return [a, b];
+  const left = sk2RDP(pts.slice(0, idx+1), eps), right = sk2RDP(pts.slice(idx), eps);
+  return left.slice(0, -1).concat(right);
+}
+function sk2SnapAngle(a){
+  const deg = a*180/Math.PI;
+  const r90 = Math.round(deg/90)*90; if(Math.abs(deg - r90) <= 20) return r90*Math.PI/180;
+  const r45 = Math.round(deg/45)*45; if(Math.abs(deg - r45) <= 10) return r45*Math.PI/180;
+  return a;
+}
+function sk2LineIntersect(p1, d1, p2, d2){
+  const den = d1.x*d2.y - d1.y*d2.x; if(Math.abs(den) < 1e-6) return null;
+  const t = ((p2.x-p1.x)*d2.y - (p2.y-p1.y)*d2.x)/den;
+  return { x:p1.x + d1.x*t, y:p1.y + d1.y*t };
+}
+function sk2Project(p, a, d){ const t = sk2V.dot(sk2V.sub(p,a), d); return sk2V.add(a, sk2V.mul(d,t)); }
+/* returns { pts, closed, gap:{a,b}|null } in world inches, or null if the stroke was just a tap */
+function sk2Straighten(raw, pxPerIn){
+  if(!raw || raw.length < 2) return null;
+  let pathLen = 0; for(let i=1;i<raw.length;i++) pathLen += sk2V.dist(raw[i-1], raw[i]);
+  if(pathLen*pxPerIn < 24) return null;
+  let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity; raw.forEach(p=>{ minx=Math.min(minx,p.x); miny=Math.min(miny,p.y); maxx=Math.max(maxx,p.x); maxy=Math.max(maxy,p.y); });
+  const diag = Math.hypot(maxx-minx, maxy-miny) || 1;
+  const eps = Math.max(7/pxPerIn, diag*0.045);
+  let simp = sk2RDP(raw, eps);
+  // drop very short pieces (hand jitter at corners)
+  const minSeg = Math.max(10/pxPerIn, diag*0.07);
+  const cleaned = [simp[0]];
+  for(let i=1;i<simp.length;i++){ if(sk2V.dist(simp[i], cleaned[cleaned.length-1]) >= minSeg || i===simp.length-1) cleaned.push(simp[i]); }
+  if(cleaned.length >= 3 && sk2V.dist(cleaned[cleaned.length-1], cleaned[cleaned.length-2]) < minSeg) cleaned.splice(cleaned.length-2, 1);
+  simp = cleaned;
+  const first = raw[0], last = raw[raw.length-1], gapLen = sk2V.dist(first, last);
+  let closed = false, gap = null;
+  if(simp.length >= 4 && gapLen < diag*0.12){ closed = true; simp = simp.slice(0, -1); }
+  else if(simp.length >= 4 && gapLen < diag*0.4){ closed = true; gap = {a:last, b:first}; simp = simp.slice(0, -1); }
+  else if(simp.length === 3 && gapLen < diag*0.12){ /* triangle-ish loop: keep as open walls */ }
+  // each piece becomes a straight line with a snapped direction
+  const n = closed ? simp.length : simp.length-1;
+  let lines = [];
+  for(let i=0;i<n;i++){
+    const a = simp[i], b = simp[(i+1)%simp.length];
+    const ang = sk2SnapAngle(Math.atan2(b.y-a.y, b.x-a.x));
+    lines.push({ p:{x:(a.x+b.x)/2, y:(a.y+b.y)/2}, d:{x:Math.cos(ang), y:Math.sin(ang)}, ang, a, b });
+  }
+  // merge neighbours that ended up pointing the same way (one long wall drawn in two strokes)
+  const same = (l1,l2)=> Math.abs(Math.sin(l1.ang - l2.ang)) < 0.02 && Math.cos(l1.ang - l2.ang) > 0;
+  let changed = true;
+  while(changed && lines.length > (closed?3:1)){
+    changed = false;
+    for(let i=0;i<lines.length && lines.length > (closed?3:1);i++){
+      const j = (i+1) % lines.length; if(!closed && j===0) break;
+      if(same(lines[i], lines[j])){
+        const A = lines[i].a, B = lines[j].b;
+        lines[i] = { p:{x:(A.x+B.x)/2, y:(A.y+B.y)/2}, d:lines[i].d, ang:lines[i].ang, a:A, b:B };
+        lines.splice(j, 1); changed = true; break;
+      }
+    }
+  }
+  if(closed && lines.length < 3) return null;
+  // corners = where neighbouring lines meet
+  const pts = [];
+  if(closed){
+    for(let i=0;i<lines.length;i++){
+      const L1 = lines[(i-1+lines.length)%lines.length], L2 = lines[i];
+      pts.push(sk2LineIntersect(L1.p, L1.d, L2.p, L2.d) || L2.a);
+    }
+  } else {
+    pts.push(sk2Project(first, lines[0].p, lines[0].d));
+    for(let i=1;i<lines.length;i++) pts.push(sk2LineIntersect(lines[i-1].p, lines[i-1].d, lines[i].p, lines[i].d) || lines[i].a);
+    pts.push(sk2Project(last, lines[lines.length-1].p, lines[lines.length-1].d));
+  }
+  // guard against wild corners from nearly-parallel lines
+  for(const p of pts){ if(!isFinite(p.x) || !isFinite(p.y) || p.x < minx - diag || p.x > maxx + diag || p.y < miny - diag || p.y > maxy + diag) return null; }
+  return { pts, closed, gap };
+}
+/* put a door where the outline was left open */
+function sk2DoorFromGap(sh, gap){
+  if(!gap) return null;
+  const mid = {x:(gap.a.x+gap.b.x)/2, y:(gap.a.y+gap.b.y)/2};
+  let best = null;
+  for(let i=0;i<sk2SegCount(sh);i++){ const [a,b] = sk2SegEnds(sh,i); const r = sk2PointSegDist(mid, a, b); if(!best || r.d < best.d) best = {seg:i, t:r.t, d:r.d}; }
+  if(!best) return null;
+  const segLen = sk2SegLen(sh, best.seg);
+  const w = Math.max(24, Math.min(sk2V.dist(gap.a, gap.b), segLen*0.8));
+  const half = (w/2)/segLen; const t = Math.max(half, Math.min(1-half, best.t));
+  return { id:sk2Uid(), sid:sh.id, seg:best.seg, t, w, type:'door' };
+}
+
+/* ---- measuring a wall: the wall takes that exact length and the room adjusts to fit ---- */
+function sk2SetLength(plan, sh, i, L){
+  const res = { ok:true, scaled:false, mismatch:0 };
+  if(!(L > 0)) return { ok:false };
+  const n = sk2SegCount(sh); if(i<0 || i>=n) return { ok:false };
+  sh.meas = sh.meas || {};
+  const cur = sk2SegLen(sh, i); if(cur < 1e-6) return { ok:false };
+  const anyMeasured = Object.keys(sh.meas).length > 0;
+  if(!anyMeasured){
+    // first wall measured on this shape: scale the whole shape so every wall becomes realistic at once
+    const f = L/cur, o = sh.pts[i];
+    sh.pts = sh.pts.map(p=>({ x:o.x + (p.x-o.x)*f, y:o.y + (p.y-o.y)*f }));
+    plan.openings.filter(op=>op.sid===sh.id).forEach(op=>{ op.w = Math.max(18, Math.min(96, op.w*f)); });
+    sh.meas[i] = L; res.scaled = true; return res;
+  }
+  const anchor = {x:sh.pts[i].x, y:sh.pts[i].y};
+  const vec = []; for(let k=0;k<n;k++){ const [a,b] = sk2SegEnds(sh,k); vec.push(sk2V.sub(b,a)); }
+  const dir = vec.map(v=>sk2V.norm(v));
+  const delta = L - cur;
+  vec[i] = sk2V.mul(dir[i], L);
+  if(sh.closed){
+    // something else has to give: the best unmeasured wall running the same direction (usually the opposite wall)
+    let j = -1, bestScore = -Infinity;
+    for(let k=0;k<n;k++){
+      if(k===i || sh.meas[k]!=null) continue;
+      const c = sk2V.dot(dir[k], dir[i]); if(Math.abs(c) < 0.98) continue;
+      const newLen = sk2V.len(vec[k]) + (c<0 ? delta : -delta); if(newLen < 2) continue;
+      const score = (c<0 ? 1000 : 0) + sk2V.len(vec[k]);
+      if(score > bestScore){ bestScore = score; j = k; }
+    }
+    if(j >= 0){ const c = sk2V.dot(dir[j], dir[i]); vec[j] = sk2V.mul(dir[j], sk2V.len(vec[j]) + (c<0 ? delta : -delta)); }
+    else {
+      // no parallel wall free: let the last unmeasured wall close the room (it may tilt)
+      let k2 = -1; for(let k=n-1;k>=0;k--){ if(k!==i && sh.meas[k]==null){ k2 = k; break; } }
+      const sum = vec.reduce((acc,v)=>sk2V.add(acc,v), {x:0,y:0});
+      if(k2 >= 0) vec[k2] = sk2V.sub(vec[k2], sum);
+    }
+    const sum2 = vec.reduce((acc,v)=>sk2V.add(acc,v), {x:0,y:0});
+    res.mismatch = sk2V.len(sum2);
+  }
+  const pts = [{x:0,y:0}]; for(let k=0;k<n-(sh.closed?1:0);k++) pts.push(sk2V.add(pts[k], vec[k]));
+  const shift = sk2V.sub(anchor, pts[i]);
+  sh.pts = pts.map(p=>sk2V.add(p, shift));
+  sh.meas[i] = L;
+  // walls measured earlier that no longer match (only possible when the numbers disagree)
+  return res;
+}
+function sk2MeasureStatus(sh, i){
+  const m = sh.meas && sh.meas[i]; if(m==null) return 'est';
+  return Math.abs(sk2SegLen(sh,i) - m) < 0.15 ? 'ok' : 'off';
+}
+
+/* ---- totals ---- */
+function sk2Area(sh){
+  if(!sh.closed || sh.pts.length < 3) return 0;
+  let a = 0; for(let i=0;i<sh.pts.length;i++){ const p = sh.pts[i], q = sh.pts[(i+1)%sh.pts.length]; a += p.x*q.y - q.x*p.y; }
+  return Math.abs(a)/2;
+}
+function sk2DoorWidthOn(plan, sh, seg){ return plan.openings.filter(o=>o.sid===sh.id && (seg==null || o.seg===seg) && o.type!=='window').reduce((s,o)=>s+o.w, 0); }
+function sk2ShapeLF(plan, sh){ let t = 0; for(let i=0;i<sk2SegCount(sh);i++) t += sk2SegLen(sh,i); return Math.max(0, t - sk2DoorWidthOn(plan, sh)); }
+function sk2Totals(plan){
+  let area = 0, lf = 0, rooms = [];
+  plan.shapes.forEach(sh=>{
+    const a = sk2Area(sh), l = sk2ShapeLF(plan, sh);
+    lf += l;
+    if(sh.closed){ area += a; rooms.push({ id:sh.id, name:sh.name||'Room', sqft:a/144, lf:l/12, measured: Object.keys(sh.meas||{}).length, walls: sk2SegCount(sh) }); }
+  });
+  return { sqft: area/144, lf: lf/12, rooms };
+}
+function sk2Centroid(sh){
+  const pts = sh.pts; let a = 0, cx = 0, cy = 0;
+  for(let i=0;i<pts.length;i++){ const p = pts[i], q = pts[(i+1)%pts.length]; const f = p.x*q.y - q.x*p.y; a += f; cx += (p.x+q.x)*f; cy += (p.y+q.y)*f; }
+  if(Math.abs(a) < 1e-6){ const s = pts.reduce((acc,p)=>sk2V.add(acc,p), {x:0,y:0}); return sk2V.mul(s, 1/pts.length); }
+  return { x:cx/(3*a), y:cy/(3*a) };
+}
+function sk2PointInPoly(p, pts){
+  let inside = false;
+  for(let i=0, j=pts.length-1; i<pts.length; j=i++){
+    const a = pts[i], b = pts[j];
+    if(((a.y>p.y)!==(b.y>p.y)) && (p.x < (b.x-a.x)*(p.y-a.y)/(b.y-a.y) + a.x)) inside = !inside;
+  }
+  return inside;
+}
+// (node test export removed)
+if(false) module.exports = { sk2ParseLen, sk2Fmt, sk2Straighten, sk2SetLength, sk2Totals, sk2NewPlan, sk2DoorFromGap, sk2SegLen, sk2SegCount, sk2Area, sk2MeasureStatus };
+
+/* ================= SKETCH 2.0 — SCREEN =================
+   Draw rough walls with a finger → they straighten. Tap a wall → measure it with the T1R (or type) → the room fits.
+   Old sketches (made before 2.0) still open in the old editor. */
+const SK2_BOX_PRESETS = [
+  ['Base Cabinet',36,24],['Upper Cabinet',36,12],['Sink Base',36,24],['Fridge',36,30],['Range / Stove',30,26],['Dishwasher',24,24],
+  ['Microwave',30,15],['Island',72,36],['Vanity',36,21],['Toilet',20,28],['Tub',60,30],['Shower',36,36],['Washer',27,30],['Dryer',27,30],
+  ['Water Heater',24,24],['Pantry',24,24],['Closet',48,24]
+];
+const SK2_ROOM_NAMES = ['Kitchen','Living Room','Dining Room','Family Room','Bedroom','Primary Bedroom','Bathroom','Primary Bath','Half Bath','Laundry','Closet','Hallway','Foyer','Office','Garage','Patio','Pantry','Utility'];
+const SK2_RECOVER_KEY = 'gsb2-sketch2-recover';
+let _sk2Timer = null;
+
+function sk2IsLegacy(existing){
+  if(!existing || existing.v===2) return false;
+  if(existing.pages && existing.pages.some(p=>(p.strokes||[]).length || (p.rooms||[]).length)) return true;
+  if(existing.strokes && existing.strokes.length) return true;
+  return false;
+}
+function openSketchEditor(existing, readOnly, onSave, ctx){
+  if(sk2IsLegacy(existing)) return openSketchEditorLegacy(existing, readOnly, onSave, ctx);
+  return sk2Open(existing && existing.v===2 ? existing.plan : null, readOnly, onSave, ctx);
+}
+function sk2Open(plan, readOnly, onSave, ctx){
+  plan = plan ? JSON.parse(JSON.stringify(plan)) : sk2NewPlan();
+  ['shapes','openings','boxes','columns','notes'].forEach(k=>{ if(!Array.isArray(plan[k])) plan[k] = []; });
+  let tapeOn = true; try{ tapeOn = localStorage.getItem('gsb2-sk2-tape')!=='0'; }catch(e){}
+  STATE.sk2 = { plan, readOnly:!!readOnly, onSave, ctx: ctx||null, tool: readOnly ? 'select' : 'draw', view:{s:2, ox:0, oy:0},
+    sel:null, picks:[], undo:[], dirty:false, stroke:null, pointers:new Map(), drag:null, pinch:null, lastBox:SK2_BOX_PRESETS[0], tapeOn, boxField:'w' };
+  sk2BuildDom();
+  sk2Fit();
+  sk2Draw(); sk2Panel();
+  clearInterval(_sk2Timer);
+  if(!readOnly) _sk2Timer = setInterval(sk2RecoverWrite, 2500);
+}
+function sk2RecoverWrite(){
+  const S = STATE.sk2; if(!S || S.readOnly || !S.dirty) return;
+  try{ localStorage.setItem(SK2_RECOVER_KEY, JSON.stringify({ ctx:S.ctx, plan:S.plan, ts:Date.now() })); }catch(e){}
+}
+function sk2ClearRecover(){ try{ localStorage.removeItem(SK2_RECOVER_KEY); }catch(e){} }
+function sk2Close(){
+  clearInterval(_sk2Timer); sk2ClearRecover();
+  STATE.sk2 = null;
+  const r = document.getElementById('sk2-root'); if(r) r.remove();
+  document.removeEventListener('keydown', sk2DocKey, true);
+}
+
+/* ---------- layout ---------- */
+function sk2BuildDom(){
+  const S = STATE.sk2;
+  let root = document.getElementById('sk2-root'); if(root) root.remove();
+  root = document.createElement('div'); root.id = 'sk2-root';
+  const toolBtn = (k, ic, label)=>`<button class="sk2-tool" data-sk2-tool="${k}" title="${label}"><span class="ic">${ic}</span><span class="lb">${label}</span></button>`;
+  root.innerHTML = `
+  <style>
+    #sk2-root{position:fixed;inset:0;z-index:100;background:#F7F4EC;display:flex;flex-direction:column;font-family:Inter,system-ui,sans-serif;-webkit-user-select:none;user-select:none;}
+    #sk2-root .sk2-top{display:flex;align-items:center;gap:8px;padding:calc(8px + env(safe-area-inset-top)) 12px 8px;background:#7A6A45;color:#fff;flex-wrap:wrap;}
+    #sk2-root .sk2-top .t{font-family:Oswald,sans-serif;font-size:16px;letter-spacing:.03em;margin-right:auto;}
+    #sk2-root .sk2-btn{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.35);border-radius:7px;padding:8px 12px;font:600 13px Inter,sans-serif;cursor:pointer;}
+    #sk2-root .sk2-btn.primary{background:#fff;color:#4a3f27;border-color:#fff;}
+    #sk2-root .sk2-btn.on{background:#3F7D4F;border-color:#3F7D4F;}
+    #sk2-root .sk2-totals{background:rgba(0,0,0,.18);border-radius:7px;padding:7px 10px;font:600 12.5px Inter,sans-serif;white-space:nowrap;}
+    #sk2-root .sk2-body{flex:1;position:relative;display:flex;min-height:0;}
+    #sk2-root .sk2-tools{display:flex;flex-direction:column;gap:4px;padding:8px 6px;background:#EFE9DB;border-right:1px solid #DDD5C2;overflow-y:auto;}
+    #sk2-root .sk2-tool{display:flex;flex-direction:column;align-items:center;gap:2px;width:64px;padding:7px 2px;border:1px solid transparent;border-radius:9px;background:transparent;color:#4a3f27;cursor:pointer;}
+    #sk2-root .sk2-tool .ic{font-size:21px;line-height:1;} #sk2-root .sk2-tool .lb{font:600 10.5px Inter,sans-serif;}
+    #sk2-root .sk2-tool.active{background:#fff;border-color:#7A6A45;box-shadow:0 1px 4px rgba(0,0,0,.12);}
+    #sk2-root .sk2-canvas-wrap{flex:1;position:relative;min-width:0;}
+    #sk2-root canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block;}
+    #sk2-root .sk2-hint{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:rgba(42,38,30,.82);color:#fff;font:500 13px Inter,sans-serif;padding:7px 12px;border-radius:20px;pointer-events:none;max-width:90%;text-align:center;}
+    #sk2-root .sk2-panel{width:330px;background:#fff;border-left:1px solid #DDD5C2;overflow-y:auto;padding:14px 14px 30px;-webkit-user-select:text;user-select:text;}
+    #sk2-root .sk2-panel h3{font-family:Oswald,sans-serif;font-size:17px;margin:0 0 6px;}
+    #sk2-root .sk2-panel .sub{font-size:12.5px;color:#6B6455;margin:0 0 10px;line-height:1.4;}
+    #sk2-root .sk2-big{font:700 26px Inter,sans-serif;margin:4px 0 2px;}
+    #sk2-root .sk2-row{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0;}
+    #sk2-root .sk2-row .sk2-b{flex:1 1 auto;}
+    #sk2-root .sk2-b{background:#fff;color:#4a3f27;border:1px solid #CFC6B0;border-radius:7px;padding:9px 10px;font:600 12.5px Inter,sans-serif;cursor:pointer;}
+    #sk2-root .sk2-b.main{background:#7A6A45;color:#fff;border-color:#7A6A45;}
+    #sk2-root .sk2-b.warn{color:#9B2C1E;border-color:#E3B5AD;}
+    #sk2-root .sk2-field{margin:8px 0;} #sk2-root .sk2-field label{display:block;font:600 11px Oswald,sans-serif;text-transform:uppercase;letter-spacing:.04em;color:#6B6455;margin-bottom:4px;}
+    #sk2-root .sk2-field input, #sk2-root .sk2-field textarea, #sk2-root .sk2-field select{width:100%;box-sizing:border-box;padding:10px;border:1.5px solid #CFC6B0;border-radius:7px;font-size:16px;font-family:Inter,sans-serif;}
+    #sk2-root .sk2-tapebox{border:1.5px dashed #3F7D4F;background:#F1F7F2;border-radius:8px;padding:8px 10px;font-size:12.5px;color:#2E5C3A;margin:8px 0;}
+    #sk2-root .sk2-tapebox.off{border-color:#CFC6B0;background:#FAF8F3;color:#6B6455;}
+    #sk2-root .sk2-list{border-top:1px solid #EEE;margin-top:6px;}
+    #sk2-root .sk2-list div{display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid #EEE;font-size:13px;cursor:pointer;}
+    #sk2-root .sk2-presets{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:6px 0;}
+    #sk2-root .sk2-presets button{font-size:11.5px;padding:7px 4px;}
+    #sk2-root #sk2-tape{position:absolute;left:-9999px;top:0;width:10px;height:10px;opacity:0;}
+    #sk2-root .sk2-toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);background:#2A261E;color:#fff;padding:9px 14px;border-radius:9px;font:600 13px Inter,sans-serif;pointer-events:none;opacity:0;transition:opacity .2s;max-width:90%;text-align:center;}
+    @media (max-width:900px){
+      #sk2-root .sk2-body{flex-direction:column;}
+      #sk2-root .sk2-tools{flex-direction:row;border-right:0;border-bottom:1px solid #DDD5C2;overflow-x:auto;overflow-y:hidden;}
+      #sk2-root .sk2-tool{width:58px;flex:0 0 auto;}
+      #sk2-root .sk2-panel{width:auto;max-height:38vh;border-left:0;border-top:1px solid #DDD5C2;}
+    }
+  </style>
+  <div class="sk2-top">
+    <div class="t">✏️ Sketch</div>
+    <div class="sk2-totals" id="sk2-totals"></div>
+    ${S.readOnly ? '' : `<button class="sk2-btn ${S.tapeOn?'on':''}" data-sk2="tape" title="Bluetooth tape measure (keyboard mode)">📏 Tape ${S.tapeOn?'ON':'OFF'}</button>
+    <button class="sk2-btn" data-sk2="undo">↶ Undo</button>`}
+    <button class="sk2-btn" data-sk2="fit">⤢ Fit</button>
+    ${S.readOnly ? `<button class="sk2-btn primary" data-sk2="close">Close</button>` : `<button class="sk2-btn" data-sk2="cancel">Cancel</button><button class="sk2-btn primary" data-sk2="save">Save</button>`}
+  </div>
+  <div class="sk2-body">
+    ${S.readOnly ? '' : `<div class="sk2-tools">
+      ${toolBtn('draw','✏️','Draw walls')}${toolBtn('select','👆','Select / move')}${toolBtn('door','🚪','Door')}${toolBtn('window','🪟','Window')}
+      ${toolBtn('box','⬛','Box')}${toolBtn('column','⬤','Column')}${toolBtn('note','📝','Note')}${toolBtn('pick','📐','Add up LF')}
+    </div>`}
+    <div class="sk2-canvas-wrap"><canvas id="sk2-canvas"></canvas><div class="sk2-hint" id="sk2-hint"></div><div class="sk2-toast" id="sk2-toast"></div>
+      <input id="sk2-tape" inputmode="none" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Tape measure input"></div>
+    <div class="sk2-panel" id="sk2-panel"></div>
+  </div>`;
+  document.body.appendChild(root);
+  const cv = root.querySelector('#sk2-canvas');
+  cv.addEventListener('pointerdown', sk2Down); cv.addEventListener('pointermove', sk2Move);
+  cv.addEventListener('pointerup', sk2Up); cv.addEventListener('pointercancel', sk2Up);
+  cv.addEventListener('wheel', (e)=>{ e.preventDefault(); sk2ZoomAt(e.offsetX, e.offsetY, e.deltaY<0 ? 1.12 : 1/1.12); }, {passive:false});
+  root.querySelectorAll('[data-sk2-tool]').forEach(b=>b.addEventListener('click', ()=>{ S.tool = b.dataset.sk2Tool; if(S.tool!=='pick') S.picks = []; if(S.tool==='pick'){ S.sel = null; } sk2Draw(); sk2Panel(); }));
+  root.querySelectorAll('[data-sk2]').forEach(b=>b.addEventListener('click', ()=>sk2TopAction(b.dataset.sk2)));
+  const tape = root.querySelector('#sk2-tape');
+  let tTimer = null;
+  tape.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key==='Tab'){ e.preventDefault(); clearTimeout(tTimer); sk2TapeCommit(tape.value); tape.value=''; } });
+  tape.addEventListener('input', ()=>{ clearTimeout(tTimer); tTimer = setTimeout(()=>{ if(/["']/.test(tape.value) && sk2ParseLen(tape.value)){ sk2TapeCommit(tape.value); tape.value=''; } }, 450); });
+  document.addEventListener('keydown', sk2DocKey, true);
+  window.addEventListener('resize', sk2Resize);
+  sk2Resize();
+}
+/* tape readings that arrive while nothing is focused (the tape is a keyboard) */
+let _sk2KeyBuf = '', _sk2KeyTimer = null;
+function sk2DocKey(e){
+  const S = STATE.sk2; if(!S || S.readOnly) return;
+  const a = document.activeElement;
+  if(a && (a.tagName==='INPUT' || a.tagName==='TEXTAREA' || a.tagName==='SELECT')) return;
+  if(e.key==='Enter'){ if(_sk2KeyBuf){ e.preventDefault(); sk2TapeCommit(_sk2KeyBuf); _sk2KeyBuf=''; } return; }
+  if(e.key && e.key.length===1 && /[0-9'"\/\. ftinm-]/i.test(e.key)){
+    _sk2KeyBuf += e.key; clearTimeout(_sk2KeyTimer);
+    _sk2KeyTimer = setTimeout(()=>{ if(/["']/.test(_sk2KeyBuf) && sk2ParseLen(_sk2KeyBuf)) sk2TapeCommit(_sk2KeyBuf); _sk2KeyBuf=''; }, 450);
+    e.preventDefault();
+  }
+}
+function sk2Resize(){
+  const S = STATE.sk2; if(!S) return;
+  const cv = document.getElementById('sk2-canvas'); if(!cv) return;
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio||1;
+  cv.width = Math.max(1, Math.round(r.width*dpr)); cv.height = Math.max(1, Math.round(r.height*dpr));
+  sk2Draw();
+}
+function sk2Toast(msg){
+  const t = document.getElementById('sk2-toast'); if(!t) return;
+  t.textContent = msg; t.style.opacity = '1'; clearTimeout(t._h); t._h = setTimeout(()=>{ t.style.opacity='0'; }, 2600);
+}
+function sk2FocusTape(){
+  const S = STATE.sk2; if(!S || !S.tapeOn || S.readOnly) return;
+  const t = document.getElementById('sk2-tape'); if(t){ try{ t.focus({preventScroll:true}); }catch(e){ t.focus(); } }
+}
+
+/* ---------- view ---------- */
+function sk2W2S(p){ const v = STATE.sk2.view; return { x:p.x*v.s + v.ox, y:p.y*v.s + v.oy }; }
+function sk2S2W(p){ const v = STATE.sk2.view; return { x:(p.x - v.ox)/v.s, y:(p.y - v.oy)/v.s }; }
+function sk2Bounds(plan){
+  let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  const add = (x,y)=>{ minx=Math.min(minx,x); miny=Math.min(miny,y); maxx=Math.max(maxx,x); maxy=Math.max(maxy,y); };
+  plan.shapes.forEach(sh=>sh.pts.forEach(p=>add(p.x,p.y)));
+  plan.boxes.forEach(b=>{ const r = Math.hypot(b.w,b.d)/2; add(b.x-r,b.y-r); add(b.x+r,b.y+r); });
+  plan.columns.forEach(c=>{ add(c.x-c.size,c.y-c.size); add(c.x+c.size,c.y+c.size); });
+  plan.notes.forEach(n=>{ add(n.x,n.y); add(n.x+60,n.y+12); });
+  return isFinite(minx) ? {minx,miny,maxx,maxy} : null;
+}
+function sk2Fit(){
+  const S = STATE.sk2; const cv = document.getElementById('sk2-canvas'); if(!cv) return;
+  const r = cv.getBoundingClientRect(), W = r.width||800, H = r.height||600;
+  const b = sk2Bounds(S.plan);
+  if(!b){ S.view = { s:2, ox:W/2 - 120*2, oy:H/2 - 90*2 }; return; }
+  const bw = Math.max(48, b.maxx-b.minx), bh = Math.max(48, b.maxy-b.miny);
+  const s = Math.max(0.4, Math.min(8, Math.min((W-120)/bw, (H-120)/bh)));
+  S.view = { s, ox: W/2 - (b.minx+bw/2)*s, oy: H/2 - (b.miny+bh/2)*s };
+}
+function sk2ZoomAt(x, y, f){
+  const v = STATE.sk2.view; const ns = Math.max(0.3, Math.min(12, v.s*f)); const k = ns/v.s;
+  v.ox = x - (x - v.ox)*k; v.oy = y - (y - v.oy)*k; v.s = ns; sk2Draw();
+}
+
+/* ---------- drawing ---------- */
+function sk2Draw(target){
+  const S = STATE.sk2; if(!S) return;
+  const cv = target ? target.canvas : document.getElementById('sk2-canvas'); if(!cv) return;
+  const ctx = cv.getContext('2d');
+  const dpr = target ? 1 : (window.devicePixelRatio||1);
+  const view = target ? target.view : S.view;
+  const W2S = (p)=>({ x:p.x*view.s + view.ox, y:p.y*view.s + view.oy });
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  const CW = cv.width/dpr, CH = cv.height/dpr;
+  ctx.fillStyle = target ? '#fff' : '#FBFAF6'; ctx.fillRect(0,0,CW,CH);
+  // grid every foot (only when it is useful)
+  if(!target && view.s*12 >= 7){
+    ctx.lineWidth = 1;
+    const step = 12*view.s, x0 = ((view.ox % step)+step)%step, y0 = ((view.oy % step)+step)%step;
+    ctx.strokeStyle = '#EEE9DD'; ctx.beginPath();
+    for(let x=x0; x<CW; x+=step){ ctx.moveTo(x,0); ctx.lineTo(x,CH); }
+    for(let y=y0; y<CH; y+=step){ ctx.moveTo(0,y); ctx.lineTo(CW,y); }
+    ctx.stroke();
+  }
+  const plan = S.plan, sel = target ? null : S.sel;
+  const wallPx = Math.max(3, 4.5*view.s);
+  // room fills
+  plan.shapes.forEach(sh=>{
+    if(!sh.closed) return;
+    ctx.beginPath(); sh.pts.forEach((p,i)=>{ const q = W2S(p); i ? ctx.lineTo(q.x,q.y) : ctx.moveTo(q.x,q.y); }); ctx.closePath();
+    ctx.fillStyle = (sel && sel.kind==='room' && sel.sid===sh.id) ? 'rgba(46,92,138,0.14)' : 'rgba(122,106,69,0.06)'; ctx.fill();
+  });
+  // walls with openings cut out
+  plan.shapes.forEach(sh=>{
+    const n = sk2SegCount(sh);
+    const cen = sh.closed ? sk2Centroid(sh) : null;
+    for(let i=0;i<n;i++){
+      const [a,b] = sk2SegEnds(sh,i), len = sk2V.dist(a,b); if(len < 1e-6) continue;
+      const ops = plan.openings.filter(o=>o.sid===sh.id && o.seg===i).map(o=>({o, t0:Math.max(0,o.t - (o.w/2)/len), t1:Math.min(1,o.t + (o.w/2)/len)})).sort((x,y)=>x.t0-y.t0);
+      const at = (t)=>W2S({x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t});
+      let t = 0; const pieces = [];
+      ops.forEach(x=>{ if(x.t0 > t) pieces.push([t, x.t0]); t = Math.max(t, x.t1); }); if(t < 1) pieces.push([t,1]);
+      const isSel = sel && sel.kind==='wall' && sel.sid===sh.id && sel.seg===i;
+      const isPick = S.picks.some(p=>p.sid===sh.id && p.seg===i);
+      ctx.lineCap = 'square'; ctx.lineWidth = wallPx; ctx.strokeStyle = isSel ? '#1F6FD1' : isPick ? '#D9822B' : '#2A261E';
+      pieces.forEach(([u,v])=>{ const p = at(u), q = at(v); ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); });
+      // doors & windows
+      const dir = sk2V.norm(sk2V.sub(b,a));
+      let nrm = {x:-dir.y, y:dir.x};
+      if(cen){ const mid = {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; if(sk2V.dot(sk2V.sub(cen, mid), nrm) < 0) nrm = {x:-nrm.x, y:-nrm.y}; }   // points into the room
+      ops.forEach(({o, t0, t1})=>{
+        const p = at(t0), q = at(t1), osel = sel && sel.kind==='opening' && sel.id===o.id;
+        ctx.strokeStyle = osel ? '#1F6FD1' : '#2A261E';
+        if(o.type==='window'){
+          const off = wallPx*0.35;
+          ctx.lineWidth = 1.6;
+          [-off, off].forEach(k=>{ ctx.beginPath(); ctx.moveTo(p.x+nrm.x*k, p.y+nrm.y*k); ctx.lineTo(q.x+nrm.x*k, q.y+nrm.y*k); ctx.stroke(); });
+          ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke();
+          ctx.fillStyle = osel ? '#1F6FD1' : '#2A261E'; [p,q].forEach(z=>{ ctx.fillRect(z.x-2.5, z.y-2.5, 5, 5); });
+        } else {
+          const hinge = o.flip ? q : p, other = o.flip ? p : q;
+          const sgn = o.side ? -1 : 1;
+          const r = sk2V.dist(p,q), leaf = { x: hinge.x + nrm.x*r*sgn, y: hinge.y + nrm.y*r*sgn };
+          ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(hinge.x, hinge.y); ctx.lineTo(leaf.x, leaf.y); ctx.stroke();
+          ctx.lineWidth = 1; ctx.setLineDash([4,3]); ctx.beginPath();
+          const a0 = Math.atan2(other.y-hinge.y, other.x-hinge.x), a1 = Math.atan2(leaf.y-hinge.y, leaf.x-hinge.x);
+          let da = a1 - a0; while(da > Math.PI) da -= 2*Math.PI; while(da < -Math.PI) da += 2*Math.PI;
+          ctx.arc(hinge.x, hinge.y, r, a0, a1, da < 0); ctx.stroke(); ctx.setLineDash([]);
+        }
+      });
+      // length label
+      const st = sk2MeasureStatus(sh, i);
+      const mid = W2S({x:(a.x+b.x)/2, y:(a.y+b.y)/2});
+      const out = cen ? {x:-nrm.x, y:-nrm.y} : {x:-dir.y, y:dir.x};
+      const lx = mid.x + out.x*(wallPx/2 + 11), ly = mid.y + out.y*(wallPx/2 + 11);
+      let ang = Math.atan2(b.y-a.y, b.x-a.x); if(ang > Math.PI/2 || ang < -Math.PI/2) ang += Math.PI;
+      const txt = st==='est' ? sk2Fmt(len, true) : sk2Fmt(len);
+      if(view.s*len > 26){
+        ctx.save(); ctx.translate(lx, ly); ctx.rotate(ang);
+        ctx.font = (st==='est' ? 'italic 500 ' : '700 ') + (target ? 13 : 12.5) + 'px Inter, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const w = ctx.measureText(txt).width + 8;
+        ctx.fillStyle = 'rgba(255,255,255,0.88)'; ctx.fillRect(-w/2, -9, w, 18);
+        ctx.fillStyle = st==='ok' ? '#1d1a14' : st==='off' ? '#B3261E' : '#8C8576';
+        ctx.fillText(txt, 0, 0.5); ctx.restore();
+      }
+    }
+  });
+  // corners
+  if(!target){ ctx.fillStyle = '#2A261E'; plan.shapes.forEach(sh=>sh.pts.forEach(p=>{ const q = W2S(p); ctx.beginPath(); ctx.arc(q.x,q.y, Math.max(1.5, wallPx*0.5), 0, Math.PI*2); ctx.fill(); })); }
+  // boxes (cabinets, appliances…)
+  plan.boxes.forEach(bx=>{
+    const c = W2S(bx), isSel = sel && sel.kind==='box' && sel.id===bx.id;
+    ctx.save(); ctx.translate(c.x, c.y); ctx.rotate((bx.ang||0)*Math.PI/180);
+    const w = bx.w*view.s, h = bx.d*view.s;
+    ctx.fillStyle = '#F1EBDC'; ctx.strokeStyle = isSel ? '#1F6FD1' : '#7A6A45'; ctx.lineWidth = isSel ? 2.5 : 1.5;
+    ctx.fillRect(-w/2,-h/2,w,h); ctx.strokeRect(-w/2,-h/2,w,h);
+    ctx.fillStyle = '#4a3f27'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    const fs = Math.max(8, Math.min(13, Math.min(w/Math.max(4,(bx.label||'').length)*1.7, h*0.42)));
+    ctx.font = '600 '+fs+'px Inter, sans-serif'; ctx.fillText(bx.label||'Box', 0, h > 26 ? -fs*0.45 : 0);
+    if(h > 26){ ctx.font = '500 '+Math.max(7.5, fs*0.78)+'px Inter, sans-serif'; ctx.fillStyle = '#7d7462'; ctx.fillText(Math.round(bx.w)+'" × '+Math.round(bx.d)+'"', 0, fs*0.7); }
+    ctx.restore();
+  });
+  // columns
+  plan.columns.forEach(co=>{
+    const c = W2S(co), r = Math.max(4, co.size*view.s/2), isSel = sel && sel.kind==='column' && sel.id===co.id;
+    ctx.fillStyle = '#4a4436'; ctx.strokeStyle = isSel ? '#1F6FD1' : '#2A261E'; ctx.lineWidth = isSel ? 3 : 1;
+    ctx.beginPath(); co.round ? ctx.arc(c.x,c.y,r,0,Math.PI*2) : ctx.rect(c.x-r,c.y-r,2*r,2*r); ctx.fill(); ctx.stroke();
+  });
+  // room names + square feet
+  plan.shapes.forEach(sh=>{
+    if(!sh.closed) return;
+    const c = W2S(sk2Centroid(sh));
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = '700 '+(target?15:14)+'px Oswald, Inter, sans-serif'; ctx.fillStyle = '#2E5C8A';
+    ctx.fillText((sh.name||'Room').toUpperCase(), c.x, c.y-9);
+    ctx.font = '600 12px Inter, sans-serif'; ctx.fillStyle = '#4a4436';
+    const done = Object.keys(sh.meas||{}).length;
+    ctx.fillText((done ? '' : '~') + (sk2Area(sh)/144).toFixed(1)+' sq ft', c.x, c.y+9);
+  });
+  // notes
+  plan.notes.forEach(nt=>{
+    const c = W2S(nt), isSel = sel && sel.kind==='note' && sel.id===nt.id;
+    ctx.font = '600 13px Inter, sans-serif'; ctx.textAlign='left'; ctx.textBaseline='top';
+    const lines = String(nt.text||'').split('\n'); const w = Math.max(...lines.map(l=>ctx.measureText(l).width)) + 10, h = lines.length*16 + 6;
+    ctx.fillStyle = 'rgba(255,248,200,0.95)'; ctx.strokeStyle = isSel ? '#1F6FD1' : '#D6C46A'; ctx.lineWidth = isSel ? 2 : 1;
+    ctx.fillRect(c.x, c.y, w, h); ctx.strokeRect(c.x, c.y, w, h);
+    ctx.fillStyle = '#3d3520'; lines.forEach((l,i)=>ctx.fillText(l, c.x+5, c.y+4+i*16));
+  });
+  // the stroke being drawn
+  if(!target && S.stroke && S.stroke.length > 1){
+    ctx.strokeStyle = '#1F6FD1'; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath();
+    S.stroke.forEach((p,i)=>{ const q = W2S(p); i ? ctx.lineTo(q.x,q.y) : ctx.moveTo(q.x,q.y); }); ctx.stroke();
+  }
+  if(!target) sk2Status();
+}
+function sk2Status(){
+  const S = STATE.sk2; const t = sk2Totals(S.plan);
+  const el = document.getElementById('sk2-totals'); if(el) el.textContent = t.sqft.toFixed(1)+' sq ft · '+t.lf.toFixed(1)+' LF';
+  const hint = document.getElementById('sk2-hint'); if(!hint) return;
+  const tips = {
+    draw: S.plan.shapes.length ? 'Draw more walls, or TAP a wall to measure it' : 'Draw a room with your finger — leave a gap where the door is',
+    select:'Tap a wall, room or item · drag items to move · drag the background to pan · pinch to zoom',
+    door:'Tap on a wall to add a door', window:'Tap on a wall to add a window', box:'Tap where the cabinet / appliance goes',
+    column:'Tap where the column goes', note:'Tap where the note goes', pick:'Tap walls to add up their linear feet',
+  };
+  hint.textContent = S.readOnly ? 'View only — tap a wall or room to see its size' : tips[S.tool]||'';
+  document.querySelectorAll('#sk2-root [data-sk2-tool]').forEach(b=>b.classList.toggle('active', b.dataset.sk2Tool===S.tool));
+}
+
+/* ---------- finding what was tapped ---------- */
+function sk2Hit(sp){
+  const S = STATE.sk2, plan = S.plan, w = sk2S2W(sp), tol = 16/S.view.s;
+  for(let k=plan.notes.length-1;k>=0;k--){ const n = plan.notes[k], c = sk2W2S(n); const lines = String(n.text||'').split('\n'); const wpx = Math.max(...lines.map(l=>l.length))*7.5+10, hpx = lines.length*16+6; if(sp.x>=c.x-4 && sp.x<=c.x+wpx+4 && sp.y>=c.y-4 && sp.y<=c.y+hpx+4) return {kind:'note', id:n.id}; }
+  for(let k=plan.columns.length-1;k>=0;k--){ const c = plan.columns[k]; if(sk2V.dist(w,c) <= c.size/2 + tol) return {kind:'column', id:c.id}; }
+  for(let k=plan.boxes.length-1;k>=0;k--){
+    const b = plan.boxes[k], a = -(b.ang||0)*Math.PI/180, dx = w.x-b.x, dy = w.y-b.y;
+    const lx = dx*Math.cos(a) - dy*Math.sin(a), ly = dx*Math.sin(a) + dy*Math.cos(a);
+    if(Math.abs(lx) <= b.w/2 + tol*0.5 && Math.abs(ly) <= b.d/2 + tol*0.5) return {kind:'box', id:b.id};
+  }
+  for(const o of plan.openings){
+    const sh = plan.shapes.find(s=>s.id===o.sid); if(!sh) continue;
+    const [a,b] = sk2SegEnds(sh, o.seg); const c = {x:a.x+(b.x-a.x)*o.t, y:a.y+(b.y-a.y)*o.t};
+    if(sk2V.dist(w,c) <= o.w/2 + tol*0.3) return {kind:'opening', id:o.id};
+  }
+  let best = null;
+  plan.shapes.forEach(sh=>{ for(let i=0;i<sk2SegCount(sh);i++){ const [a,b] = sk2SegEnds(sh,i); const r = sk2PointSegDist(w,a,b); if(r.d <= tol && (!best || r.d < best.d)) best = {kind:'wall', sid:sh.id, seg:i, d:r.d, t:r.t}; } });
+  if(best) return best;
+  for(let k=plan.shapes.length-1;k>=0;k--){ const sh = plan.shapes[k]; if(sh.closed && sk2PointInPoly(w, sh.pts)) return {kind:'room', sid:sh.id}; }
+  return null;
+}
+function sk2NearestWall(w, maxPx){
+  const S = STATE.sk2; let best = null;
+  S.plan.shapes.forEach(sh=>{ for(let i=0;i<sk2SegCount(sh);i++){ const [a,b] = sk2SegEnds(sh,i); const r = sk2PointSegDist(w,a,b); if(!best || r.d < best.d) best = {sh, seg:i, t:r.t, d:r.d}; } });
+  return (best && best.d*S.view.s <= maxPx) ? best : null;
+}
+
+/* ---------- touch / mouse ---------- */
+function sk2Pt(e){ const r = e.target.getBoundingClientRect(); return { x:e.clientX - r.left, y:e.clientY - r.top }; }
+function sk2Down(e){
+  const S = STATE.sk2; if(!S) return;
+  e.preventDefault(); try{ e.target.setPointerCapture(e.pointerId); }catch(_){}
+  const p = sk2Pt(e); S.pointers.set(e.pointerId, p);
+  if(S.pointers.size === 2){
+    const [a,b] = [...S.pointers.values()];
+    S.stroke = null; S.drag = null;
+    S.pinch = { d: sk2V.dist(a,b), mid:{x:(a.x+b.x)/2, y:(a.y+b.y)/2}, view:{...S.view} };
+    sk2Draw(); return;
+  }
+  if(S.pointers.size > 2) return;
+  S.down = { p, t:Date.now(), moved:false };
+  if(S.tool==='draw' && !S.readOnly){ S.stroke = [sk2S2W(p)]; return; }
+  if(S.tool==='select' && !S.readOnly){
+    const h = sk2Hit(p);
+    if(h && (h.kind==='box' || h.kind==='column' || h.kind==='note' || h.kind==='opening' || (h.kind==='room' && S.sel && S.sel.kind==='room' && S.sel.sid===h.sid))){
+      S.drag = { hit:h, start:sk2S2W(p), pushed:false }; return;
+    }
+  }
+  S.drag = { pan:true, start:p, view:{...S.view} };
+}
+function sk2Move(e){
+  const S = STATE.sk2; if(!S || !S.pointers.has(e.pointerId)) return;
+  e.preventDefault();
+  const p = sk2Pt(e); S.pointers.set(e.pointerId, p);
+  if(S.pinch && S.pointers.size >= 2){
+    const [a,b] = [...S.pointers.values()]; const d = sk2V.dist(a,b), mid = {x:(a.x+b.x)/2, y:(a.y+b.y)/2};
+    const v0 = S.pinch.view, ns = Math.max(0.3, Math.min(12, v0.s * d/S.pinch.d)), k = ns/v0.s;
+    S.view = { s:ns, ox: mid.x - (S.pinch.mid.x - v0.ox)*k, oy: mid.y - (S.pinch.mid.y - v0.oy)*k };
+    sk2Draw(); return;
+  }
+  if(S.down && sk2V.dist(p, S.down.p) > 6) S.down.moved = true;
+  if(S.stroke){ const w = sk2S2W(p); const last = S.stroke[S.stroke.length-1]; if(sk2V.dist(w,last)*S.view.s >= 2){ S.stroke.push(w); sk2Draw(); } return; }
+  if(S.drag && S.drag.pan){ S.view.ox = S.drag.view.ox + (p.x - S.drag.start.x); S.view.oy = S.drag.view.oy + (p.y - S.drag.start.y); sk2Draw(); return; }
+  if(S.drag && S.drag.hit && S.down.moved){
+    if(!S.drag.pushed){ sk2Push(); S.drag.pushed = true; }
+    const w = sk2S2W(p), d = sk2V.sub(w, S.drag.start); S.drag.start = w;
+    const h = S.drag.hit, plan = S.plan;
+    if(h.kind==='box'){ const b = plan.boxes.find(x=>x.id===h.id); b.x += d.x; b.y += d.y; S.sel = h; }
+    if(h.kind==='column'){ const c = plan.columns.find(x=>x.id===h.id); c.x += d.x; c.y += d.y; S.sel = h; }
+    if(h.kind==='note'){ const n = plan.notes.find(x=>x.id===h.id); n.x += d.x; n.y += d.y; S.sel = h; }
+    if(h.kind==='room'){ const sh = plan.shapes.find(x=>x.id===h.sid); sh.pts = sh.pts.map(q=>sk2V.add(q,d)); }
+    if(h.kind==='opening'){
+      const o = plan.openings.find(x=>x.id===h.id), sh = plan.shapes.find(x=>x.id===o.sid);
+      const [a,b] = sk2SegEnds(sh,o.seg), len = sk2V.dist(a,b), half = (o.w/2)/len;
+      o.t = Math.max(half, Math.min(1-half, sk2PointSegDist(w,a,b).t)); S.sel = h;
+    }
+    S.dirty = true; sk2Draw();
+  }
+}
+function sk2Up(e){
+  const S = STATE.sk2; if(!S) return;
+  const p = S.pointers.get(e.pointerId) || sk2Pt(e);
+  S.pointers.delete(e.pointerId);
+  if(S.pinch){ if(S.pointers.size < 2) S.pinch = null; S.down = null; S.stroke = null; S.drag = null; return; }
+  const down = S.down; S.down = null;
+  const tap = down && !down.moved && (Date.now() - down.t) < 600;
+  if(S.stroke){
+    const stroke = S.stroke; S.stroke = null;
+    if(tap || stroke.length < 3){ sk2Select(sk2Hit(p)); return; }    // a tap while drawing selects (draw a room, then tap a wall to measure it)
+    sk2AddStroke(stroke); return;
+  }
+  if(S.drag && S.drag.hit && !tap){ S.drag = null; sk2Panel(); return; }
+  S.drag = null;
+  if(!tap) return;
+  const w = sk2S2W(p);
+  if(S.readOnly || S.tool==='select'){ sk2Select(sk2Hit(p)); return; }
+  if(S.tool==='pick'){
+    const nw = sk2NearestWall(w, 18); if(!nw) return;
+    const h = {sid:nw.sh.id, seg:nw.seg};
+    const i = S.picks.findIndex(x=>x.sid===h.sid && x.seg===h.seg);
+    if(i>=0) S.picks.splice(i,1); else S.picks.push({sid:h.sid, seg:h.seg});
+    sk2Draw(); sk2Panel(); return;
+  }
+  if(S.tool==='door' || S.tool==='window'){
+    const nw = sk2NearestWall(w, 30); if(!nw){ sk2Toast('Tap right on a wall'); return; }
+    sk2Push();
+    const len = sk2SegLen(nw.sh, nw.seg), ow = Math.min(S.tool==='door' ? 32 : 36, len*0.8), half = (ow/2)/len;
+    const o = { id:sk2Uid(), sid:nw.sh.id, seg:nw.seg, t:Math.max(half, Math.min(1-half, nw.t)), w:ow, type:S.tool };
+    S.plan.openings.push(o); S.dirty = true; sk2Select({kind:'opening', id:o.id}); return;
+  }
+  if(S.tool==='box'){
+    sk2Push(); const [label, bw, bd] = S.lastBox;
+    const b = { id:sk2Uid(), x:w.x, y:w.y, w:bw, d:bd, ang:0, label };
+    S.plan.boxes.push(b); S.dirty = true; S.boxField = 'w'; sk2Select({kind:'box', id:b.id}); return;
+  }
+  if(S.tool==='column'){ sk2Push(); const c = { id:sk2Uid(), x:w.x, y:w.y, size:12, round:false }; S.plan.columns.push(c); S.dirty = true; sk2Select({kind:'column', id:c.id}); return; }
+  if(S.tool==='note'){
+    const text = prompt('Note:'); if(!text || !text.trim()) return;
+    sk2Push(); const n = { id:sk2Uid(), x:w.x, y:w.y, text:text.trim() }; S.plan.notes.push(n); S.dirty = true; sk2Select({kind:'note', id:n.id}); return;
+  }
+  sk2Select(sk2Hit(p));
+}
+function sk2AddStroke(stroke){
+  const S = STATE.sk2;
+  const r = sk2Straighten(stroke, S.view.s); if(!r){ sk2Draw(); return; }
+  sk2Push();
+  const sh = { id:sk2Uid(), pts:r.pts, closed:r.closed, name:'', meas:{} };
+  // join up with walls already drawn: snap to a nearby corner
+  const snapPx = 22, others = S.plan.shapes.flatMap(s=>s.pts);
+  if(others.length){
+    if(sh.closed){
+      let best = null; sh.pts.forEach(p=>others.forEach(q=>{ const d = sk2V.dist(p,q); if(d*S.view.s <= snapPx && (!best || d < best.d)) best = {d, v:sk2V.sub(q,p)}; }));
+      if(best) sh.pts = sh.pts.map(p=>sk2V.add(p, best.v));
+    } else {
+      [0, sh.pts.length-1].forEach(idx=>{ let best = null; others.forEach(q=>{ const d = sk2V.dist(sh.pts[idx], q); if(d*S.view.s <= snapPx && (!best || d < best.d)) best = {d, q}; }); if(best) sh.pts[idx] = {x:best.q.x, y:best.q.y}; });
+    }
+  }
+  if(sh.closed){ const used = S.plan.shapes.filter(s=>s.closed).length; sh.name = 'Room '+(used+1); }
+  S.plan.shapes.push(sh);
+  const door = sh.closed ? sk2DoorFromGap(sh, r.gap) : null;
+  if(door) S.plan.openings.push(door);
+  S.dirty = true;
+  if(sh.closed){ sk2Select({kind:'room', sid:sh.id}); sk2Toast(door ? '✓ Room made — door added where you left the gap' : '✓ Room made'); }
+  else { S.sel = null; sk2Draw(); sk2Panel(); }
+}
+function sk2Push(){ const S = STATE.sk2; S.undo.push(JSON.stringify(S.plan)); if(S.undo.length > 60) S.undo.shift(); }
+function sk2Select(h){
+  const S = STATE.sk2;
+  S.sel = h ? (h.kind==='wall' ? {kind:'wall', sid:h.sid, seg:h.seg} : h) : null;
+  if(S.sel && S.sel.kind==='box') S.boxField = S.boxField || 'w';
+  sk2Draw(); sk2Panel();
+  if(S.sel && (S.sel.kind==='wall' || S.sel.kind==='opening' || S.sel.kind==='box' || S.sel.kind==='column')) sk2FocusTape();
+}
+
+/* ---------- a measurement arrived (tape or typed) ---------- */
+function sk2TapeCommit(raw){
+  const S = STATE.sk2; if(!S || S.readOnly) return;
+  const L = sk2ParseLen(raw);
+  if(L==null){ sk2Toast('Could not read "'+String(raw).trim()+'"'); return; }
+  const sel = S.sel;
+  if(!sel){ sk2Toast('Tap a wall first, then measure ('+sk2Fmt(L)+')'); return; }
+  sk2ApplyLength(L);
+}
+function sk2ApplyLength(L){
+  const S = STATE.sk2, sel = S.sel, plan = S.plan;
+  if(sel.kind==='wall'){
+    const sh = plan.shapes.find(x=>x.id===sel.sid); if(!sh) return;
+    sk2Push();
+    if(!plan.shapes.some(x=>Object.keys(x.meas||{}).length)){
+      // very first measurement: this sets the real scale for the whole sketch, so rooms drawn later come out the right size too
+      const cur = sk2SegLen(sh, sel.seg);
+      if(cur > 1e-6){
+        const f = L/cur, o = {x:sh.pts[sel.seg].x, y:sh.pts[sel.seg].y};
+        const sc = (p)=>({ x:o.x + (p.x-o.x)*f, y:o.y + (p.y-o.y)*f });
+        plan.shapes.forEach(x=>{ x.pts = x.pts.map(sc); });
+        plan.openings.forEach(op=>{ op.w = Math.max(18, Math.min(96, op.w*f)); });
+        ['boxes','columns','notes'].forEach(k=>plan[k].forEach(it=>{ const q = sc(it); it.x = q.x; it.y = q.y; }));
+        const v = S.view, sx = o.x*v.s + v.ox, sy = o.y*v.s + v.oy;
+        v.s = v.s/f; v.ox = sx - o.x*v.s; v.oy = sy - o.y*v.s;
+      }
+    }
+    const r = sk2SetLength(plan, sh, sel.seg, L); S.dirty = true;
+    if(!r.ok){ sk2Toast('Could not set that wall'); return; }
+    let msg = '✓ '+sk2Fmt(L);
+    if(r.mismatch > 0.5) msg += ' — measurements are off by '+sk2Fmt(r.mismatch)+'; re-check a wall';
+    // walk around the room: jump to the next wall that has no measurement yet
+    const n = sk2SegCount(sh); let next = null;
+    for(let k=1;k<=n;k++){ const j = (sel.seg + k) % n; if(!sh.closed && j===0 && sel.seg===n-1) break; if(sh.meas[j]==null){ next = j; break; } }
+    if(next!=null) S.sel = {kind:'wall', sid:sh.id, seg:next}; else msg += ' — all walls measured';
+    sk2Toast(msg); sk2Draw(); sk2Panel(); sk2FocusTape(); return;
+  }
+  if(sel.kind==='opening'){
+    const o = plan.openings.find(x=>x.id===sel.id); if(!o) return; sk2Push();
+    const sh = plan.shapes.find(x=>x.id===o.sid), len = sk2SegLen(sh, o.seg);
+    o.w = Math.min(L, len); const half = (o.w/2)/len; o.t = Math.max(half, Math.min(1-half, o.t));
+    S.dirty = true; sk2Toast('✓ '+(o.type==='window'?'Window':'Door')+' width '+sk2Fmt(o.w)); sk2Draw(); sk2Panel(); return;
+  }
+  if(sel.kind==='box'){
+    const b = plan.boxes.find(x=>x.id===sel.id); if(!b) return; sk2Push();
+    if(S.boxField==='d'){ b.d = L; S.boxField = 'w'; sk2Toast('✓ Depth '+sk2Fmt(L)); }
+    else { b.w = L; S.boxField = 'd'; sk2Toast('✓ Width '+sk2Fmt(L)+' — now measure the depth'); }
+    S.dirty = true; sk2Draw(); sk2Panel(); sk2FocusTape(); return;
+  }
+  if(sel.kind==='column'){ const c = plan.columns.find(x=>x.id===sel.id); if(!c) return; sk2Push(); c.size = L; S.dirty = true; sk2Toast('✓ Column '+sk2Fmt(L)); sk2Draw(); sk2Panel(); return; }
+  sk2Toast('Tap a wall first, then measure');
+}
+
+/* ---------- side panel ---------- */
+function sk2Panel(){
+  const S = STATE.sk2, el = document.getElementById('sk2-panel'); if(!S || !el) return;
+  const plan = S.plan, sel = S.sel, ro = S.readOnly;
+  const tapeBox = (what)=> ro ? '' : (S.tapeOn
+    ? `<div class="sk2-tapebox">📏 <b>Ready for the tape.</b> Measure the ${what} and press the save button on your T1R.</div>`
+    : `<div class="sk2-tapebox off">Tape is OFF (top bar). Type the size below.</div>`);
+  const lenInput = (id, val)=> ro ? '' : `<div class="sk2-field"><label>Type a size</label><div style="display:flex;gap:6px;"><input id="${id}" value="" placeholder="e.g. 12' 4 3/8&quot;  or  12 4" autocomplete="off"><button class="sk2-b main" data-sk2p="setlen" data-input="${id}">Set</button></div></div>`;
+  let h = '';
+  if(S.tool==='pick' && !ro){
+    let tot = 0; S.picks.forEach(p=>{ const sh = plan.shapes.find(x=>x.id===p.sid); if(sh) tot += sk2SegLen(sh, p.seg) - sk2DoorWidthOn(plan, sh, p.seg); });
+    h = `<h3>📐 Add up linear feet</h3><p class="sub">Tap walls on the sketch to add or remove them. Door openings are taken out.</p>
+      <div class="sk2-big">${(tot/12).toFixed(1)} LF</div><div class="sub">${S.picks.length} wall${S.picks.length===1?'':'s'} picked · ${sk2Fmt(tot)}</div>
+      <div class="sk2-row"><button class="sk2-b" data-sk2p="clearpicks">Clear</button></div>`;
+  } else if(sel && sel.kind==='wall'){
+    const sh = plan.shapes.find(x=>x.id===sel.sid); if(!sh){ S.sel = null; return sk2Panel(); }
+    const n = sk2SegCount(sh), len = sk2SegLen(sh, sel.seg), st = sk2MeasureStatus(sh, sel.seg);
+    const done = Object.keys(sh.meas||{}).length;
+    h = `<h3>Wall ${sel.seg+1} of ${n}${sh.closed ? ' — '+esc(sh.name||'Room') : ''}</h3>
+      <div class="sk2-big" style="color:${st==='ok'?'#1d1a14':st==='off'?'#B3261E':'#8C8576'}">${st==='est' ? sk2Fmt(len,true) : sk2Fmt(len)}</div>
+      <div class="sub">${st==='est' ? 'Not measured yet (estimate from your drawing)' : st==='ok' ? '✓ Measured' : '⚠ Was measured at '+sk2Fmt(sh.meas[sel.seg])+' but the room could not close — re-check the walls'} · ${done}/${n} walls measured</div>
+      ${tapeBox('wall')}${lenInput('sk2-len')}
+      ${ro ? '' : `<div class="sk2-row"><button class="sk2-b" data-sk2p="prevwall">◀ Prev wall</button><button class="sk2-b" data-sk2p="nextwall">Next wall ▶</button></div>
+      <div class="sk2-row"><button class="sk2-b" data-sk2p="adddoor">🚪 Add door</button><button class="sk2-b" data-sk2p="addwindow">🪟 Add window</button></div>
+      <div class="sk2-row">${sh.meas && sh.meas[sel.seg]!=null ? `<button class="sk2-b" data-sk2p="unmeasure">Clear measurement</button>` : ''}<button class="sk2-b warn" data-sk2p="delshape">Delete ${sh.closed?'room':'these walls'}</button></div>`}`;
+  } else if(sel && sel.kind==='room'){
+    const sh = plan.shapes.find(x=>x.id===sel.sid); if(!sh){ S.sel = null; return sk2Panel(); }
+    const n = sk2SegCount(sh), done = Object.keys(sh.meas||{}).length;
+    h = `<h3>${esc(sh.name||'Room')}</h3>
+      <div class="sk2-big">${(sk2Area(sh)/144).toFixed(1)} sq ft</div>
+      <div class="sub">${(sk2ShapeLF(plan, sh)/12).toFixed(1)} LF around the room (doors taken out) · ${done}/${n} walls measured${done<n?' — sizes are estimates until all walls are measured':''}</div>
+      ${ro ? '' : `<div class="sk2-field"><label>Room name</label><input id="sk2-roomname" list="sk2-rooms" value="${esc(sh.name||'')}"><datalist id="sk2-rooms">${SK2_ROOM_NAMES.map(r=>`<option value="${esc(r)}">`).join('')}</datalist></div>
+      <div class="sk2-row"><button class="sk2-b main" data-sk2p="measureroom">📏 Measure walls</button></div>
+      <div class="sub">To move the room: keep it selected, switch to 👆 Select and drag it.</div>
+      <div class="sk2-row"><button class="sk2-b warn" data-sk2p="delshape">Delete room</button></div>`}`;
+  } else if(sel && sel.kind==='opening'){
+    const o = plan.openings.find(x=>x.id===sel.id); if(!o){ S.sel = null; return sk2Panel(); }
+    h = `<h3>${o.type==='window'?'🪟 Window':'🚪 Door'}</h3><div class="sk2-big">${sk2Fmt(o.w)}</div><div class="sub">Width of the opening. Drag it along the wall in 👆 Select.</div>
+      ${tapeBox('opening')}${lenInput('sk2-len')}
+      ${ro ? '' : `<div class="sk2-row"><button class="sk2-b" data-sk2p="optype">Change to ${o.type==='window'?'door':'window'}</button>${o.type!=='window'?`<button class="sk2-b" data-sk2p="flip">↔ Flip hinge</button><button class="sk2-b" data-sk2p="side">⇅ Swing in/out</button>`:''}</div>
+      <div class="sk2-row"><button class="sk2-b warn" data-sk2p="delitem">Delete</button></div>`}`;
+  } else if(sel && sel.kind==='box'){
+    const b = plan.boxes.find(x=>x.id===sel.id); if(!b){ S.sel = null; return sk2Panel(); }
+    h = `<h3>⬛ ${esc(b.label||'Box')}</h3><div class="sub">${sk2Fmt(b.w)} wide × ${sk2Fmt(b.d)} deep · drag it in 👆 Select</div>
+      ${ro ? '' : `${S.tapeOn ? `<div class="sk2-tapebox">📏 Next tape reading sets the <b>${S.boxField==='d'?'DEPTH':'WIDTH'}</b>.</div>` : ''}
+      <div class="sk2-presets">${SK2_BOX_PRESETS.map((p,i)=>`<button class="sk2-b" data-sk2p="preset" data-i="${i}">${esc(p[0])}</button>`).join('')}</div>
+      <div class="sk2-field"><label>Label</label><input id="sk2-boxlabel" value="${esc(b.label||'')}"></div>
+      <div style="display:flex;gap:6px;"><div class="sk2-field" style="flex:1"><label>Width</label><input id="sk2-boxw" value="${esc(sk2Fmt(b.w))}"></div><div class="sk2-field" style="flex:1"><label>Depth</label><input id="sk2-boxd" value="${esc(sk2Fmt(b.d))}"></div></div>
+      <div class="sk2-row"><button class="sk2-b main" data-sk2p="boxsize">Set size</button><button class="sk2-b" data-sk2p="rotate">⟳ Rotate 90°</button><button class="sk2-b" data-sk2p="dup">Duplicate</button></div>
+      <div class="sk2-row"><button class="sk2-b warn" data-sk2p="delitem">Delete</button></div>`}`;
+  } else if(sel && sel.kind==='column'){
+    const c = plan.columns.find(x=>x.id===sel.id); if(!c){ S.sel = null; return sk2Panel(); }
+    h = `<h3>⬤ Column</h3><div class="sk2-big">${sk2Fmt(c.size)}</div><div class="sub">${c.round?'Round':'Square'} · drag it in 👆 Select</div>
+      ${tapeBox('column')}${lenInput('sk2-len')}
+      ${ro ? '' : `<div class="sk2-row"><button class="sk2-b" data-sk2p="colshape">Make ${c.round?'square':'round'}</button><button class="sk2-b warn" data-sk2p="delitem">Delete</button></div>`}`;
+  } else if(sel && sel.kind==='note'){
+    const nt = plan.notes.find(x=>x.id===sel.id); if(!nt){ S.sel = null; return sk2Panel(); }
+    h = `<h3>📝 Note</h3>${ro ? `<p>${esc(nt.text)}</p>` : `<div class="sk2-field"><textarea id="sk2-notetext" rows="3">${esc(nt.text)}</textarea></div>
+      <div class="sk2-row"><button class="sk2-b main" data-sk2p="savenote">Save note</button><button class="sk2-b warn" data-sk2p="delitem">Delete</button></div>`}`;
+  } else {
+    const t = sk2Totals(plan);
+    h = `<h3>Totals</h3><div class="sk2-big">${t.sqft.toFixed(1)} sq ft</div><div class="sub">${t.lf.toFixed(1)} LF of walls (doors taken out)</div>
+      ${t.rooms.length ? `<div class="sk2-list">${t.rooms.map(r=>`<div data-sk2p="openroom" data-sid="${r.id}"><span><b>${esc(r.name)}</b>${r.measured<r.walls?' <span style="color:#B8863A">(~)</span>':''}</span><span>${r.sqft.toFixed(1)} sq ft · ${r.lf.toFixed(1)} LF</span></div>`).join('')}</div>` : ''}
+      ${ro ? '' : `<p class="sub" style="margin-top:12px;"><b>How it works</b><br>1. ✏️ Draw a room with your finger — rough is fine. Leave a gap where the door is.<br>2. Tap a wall, then measure it with the tape (or type it). The wall snaps to the size and the room adjusts. The next wall is picked for you.<br>3. Add 🚪 doors, 🪟 windows, ⬛ cabinets/appliances, ⬤ columns and 📝 notes.<br>4. Pinch to zoom, drag with 👆 Select to pan. Tap <b>Save</b> when done.</p>`}`;
+  }
+  el.innerHTML = h;
+  // wire the panel
+  el.querySelectorAll('[data-sk2p]').forEach(b=>b.addEventListener('click', ()=>sk2PanelAction(b.dataset.sk2p, b)));
+  ['sk2-len','sk2-boxw','sk2-boxd'].forEach(id=>{ const i = document.getElementById(id); if(i) i.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); sk2PanelAction(id==='sk2-len'?'setlen':'boxsize', {dataset:{input:id}}); } }); });
+  const rn = document.getElementById('sk2-roomname');
+  if(rn){ const saveName = ()=>{ const sh = plan.shapes.find(x=>x.id===sel.sid); if(sh && rn.value.trim() && rn.value.trim()!==sh.name){ sk2Push(); sh.name = rn.value.trim(); S.dirty = true; sk2Draw(); const h3 = document.querySelector('#sk2-panel h3'); if(h3) h3.textContent = sh.name; } }; rn.addEventListener('change', saveName); rn.addEventListener('blur', saveName); }
+  const bl = document.getElementById('sk2-boxlabel');
+  if(bl){ bl.addEventListener('change', ()=>{ const b = plan.boxes.find(x=>x.id===sel.id); if(b){ sk2Push(); b.label = bl.value.trim()||'Box'; S.dirty = true; sk2Draw(); } }); }
+}
+function sk2PanelAction(a, btn){
+  const S = STATE.sk2, plan = S.plan, sel = S.sel;
+  const shOf = ()=> sel && plan.shapes.find(x=>x.id===sel.sid);
+  if(a==='setlen'){ const i = document.getElementById(btn.dataset.input||'sk2-len'); const L = sk2ParseLen(i && i.value); if(L==null){ sk2Toast('Type a size like 12\' 4 3/8" or 12 4'); return; } if(i) i.value=''; sk2ApplyLength(L); if(i) i.blur(); return; }
+  if(a==='nextwall' || a==='prevwall'){ const sh = shOf(); const n = sk2SegCount(sh); S.sel = {kind:'wall', sid:sh.id, seg:(sel.seg + (a==='nextwall'?1:n-1)) % n}; sk2Draw(); sk2Panel(); sk2FocusTape(); return; }
+  if(a==='adddoor' || a==='addwindow'){
+    const sh = shOf(); const len = sk2SegLen(sh, sel.seg); const w = Math.min(a==='adddoor'?32:36, len*0.8);
+    sk2Push(); const o = { id:sk2Uid(), sid:sh.id, seg:sel.seg, t:0.5, w, type:a==='adddoor'?'door':'window' }; plan.openings.push(o); S.dirty = true;
+    sk2Select({kind:'opening', id:o.id}); return;
+  }
+  if(a==='unmeasure'){ const sh = shOf(); sk2Push(); delete sh.meas[sel.seg]; S.dirty = true; sk2Draw(); sk2Panel(); return; }
+  if(a==='delshape'){
+    const sh = shOf(); if(!sh || !confirm('Delete '+(sh.closed ? '"'+(sh.name||'Room')+'"' : 'these walls')+'?')) return;
+    sk2Push(); plan.shapes = plan.shapes.filter(x=>x.id!==sh.id); plan.openings = plan.openings.filter(o=>o.sid!==sh.id); S.dirty = true; S.sel = null; sk2Draw(); sk2Panel(); return;
+  }
+  if(a==='measureroom'){ const sh = shOf(); let j = 0; for(let k=0;k<sk2SegCount(sh);k++){ if(!sh.meas || sh.meas[k]==null){ j = k; break; } } S.sel = {kind:'wall', sid:sh.id, seg:j}; sk2Draw(); sk2Panel(); sk2FocusTape(); return; }
+  if(a==='openroom'){ S.sel = {kind:'room', sid:btn.dataset.sid}; sk2Draw(); sk2Panel(); return; }
+  if(a==='clearpicks'){ S.picks = []; sk2Draw(); sk2Panel(); return; }
+  const find = ()=> sel && (sel.kind==='opening' ? plan.openings : sel.kind==='box' ? plan.boxes : sel.kind==='column' ? plan.columns : plan.notes).find(x=>x.id===sel.id);
+  const it = find();
+  if(a==='delitem'){ if(!it) return; sk2Push(); ['openings','boxes','columns','notes'].forEach(k=>{ plan[k] = plan[k].filter(x=>x.id!==it.id); }); S.dirty = true; S.sel = null; sk2Draw(); sk2Panel(); return; }
+  if(!it) return;
+  sk2Push(); S.dirty = true;
+  if(a==='optype'){ it.type = it.type==='window' ? 'door' : 'window'; }
+  if(a==='flip'){ it.flip = !it.flip; }
+  if(a==='side'){ it.side = !it.side; }
+  if(a==='preset'){ const p = SK2_BOX_PRESETS[+btn.dataset.i]; it.label = p[0]; it.w = p[1]; it.d = p[2]; S.lastBox = p; S.boxField = 'w'; }
+  if(a==='boxsize'){ const w = sk2ParseLen((document.getElementById('sk2-boxw')||{}).value), d = sk2ParseLen((document.getElementById('sk2-boxd')||{}).value); if(w) it.w = w; if(d) it.d = d; const l = document.getElementById('sk2-boxlabel'); if(l && l.value.trim()) it.label = l.value.trim(); S.lastBox = [it.label, it.w, it.d]; }
+  if(a==='rotate'){ it.ang = ((it.ang||0) + 90) % 360; }
+  if(a==='dup'){ const c = JSON.parse(JSON.stringify(it)); c.id = sk2Uid(); c.x += 6; c.y += it.d + 6; plan.boxes.push(c); S.sel = {kind:'box', id:c.id}; }
+  if(a==='colshape'){ it.round = !it.round; }
+  if(a==='savenote'){ const t = (document.getElementById('sk2-notetext')||{}).value||''; if(t.trim()) it.text = t.trim(); }
+  sk2Draw(); sk2Panel();
+}
+function sk2TopAction(a){
+  const S = STATE.sk2;
+  if(a==='fit'){ sk2Fit(); sk2Draw(); return; }
+  if(a==='undo'){ const prev = S.undo.pop(); if(!prev){ sk2Toast('Nothing to undo'); return; } S.plan = JSON.parse(prev); S.sel = null; S.picks = []; S.dirty = true; sk2Draw(); sk2Panel(); return; }
+  if(a==='tape'){
+    S.tapeOn = !S.tapeOn; try{ localStorage.setItem('gsb2-sk2-tape', S.tapeOn?'1':'0'); }catch(e){}
+    const b = document.querySelector('#sk2-root [data-sk2="tape"]'); if(b){ b.classList.toggle('on', S.tapeOn); b.textContent = '📏 Tape '+(S.tapeOn?'ON':'OFF'); }
+    sk2Toast(S.tapeOn ? 'Tape ON — pair the T1R in keyboard mode, tap a wall, press the save button on the tape' : 'Tape OFF — type sizes in the panel'); sk2Panel(); if(S.tapeOn) sk2FocusTape(); return;
+  }
+  if(a==='close'){ sk2Close(); return; }
+  if(a==='cancel'){ if(S.dirty && !confirm('Close without saving? Your changes to this sketch will be lost.')) return; sk2Close(); return; }
+  if(a==='save'){
+    const plan = S.plan;
+    const data = { v:2, plan: JSON.parse(JSON.stringify(plan)), snapshot: sk2Snapshot(plan), totals: (()=>{ const t = sk2Totals(plan); return { sqft:+t.sqft.toFixed(1), lf:+t.lf.toFixed(1), rooms:t.rooms.map(r=>({name:r.name, sqft:+r.sqft.toFixed(1), lf:+r.lf.toFixed(1)})) }; })() };
+    const cb = S.onSave; sk2Close();
+    if(cb) cb(data);
+  }
+}
+/* picture of the whole plan for previews, the worksheet and printouts */
+function sk2Snapshot(plan){
+  const S = STATE.sk2;
+  const b = sk2Bounds(plan);
+  const W = 1400, H = 1000, pad = 70;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H + 46;
+  let view = { s:2, ox:W/2, oy:H/2 };
+  if(b){ const bw = Math.max(48, b.maxx-b.minx), bh = Math.max(48, b.maxy-b.miny); const s = Math.min((W-2*pad)/bw, (H-2*pad)/bh, 10); view = { s, ox: W/2 - (b.minx+bw/2)*s, oy: H/2 - (b.miny+bh/2)*s }; }
+  const keepSel = S.sel, keepPicks = S.picks, keepStroke = S.stroke; S.sel = null; S.picks = []; S.stroke = null;
+  sk2Draw({ canvas:cv, view });
+  S.sel = keepSel; S.picks = keepPicks; S.stroke = keepStroke;
+  const ctx = cv.getContext('2d'); const t = sk2Totals(plan);
+  ctx.fillStyle = '#F1EBDC'; ctx.fillRect(0, H, W, 46);
+  ctx.fillStyle = '#2A261E'; ctx.font = '600 20px Inter, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('Total: '+t.sqft.toFixed(1)+' sq ft  ·  '+t.lf.toFixed(1)+' LF of walls (doors taken out)' + (t.rooms.length ? '  ·  '+t.rooms.map(r=>r.name+' '+r.sqft.toFixed(0)+' sf').join(', ') : ''), 18, H+23);
+  return cv.toDataURL('image/png');
+}
+
 /* ---- keeps a safety copy of the sketch you're drawing, so nothing is lost if the app reloads or iOS closes it ---- */
 const SKETCH_RECOVER_KEY = 'gsb2-sketch-recover';
 let _skAutoTimer = null, _skLastJson = '';
@@ -2479,10 +3416,20 @@ function sketchSaverFor(ctx){
   if(ctx.kind==='view-onsite') return async (data)=>{ const sk = ensureSketches(f); const cur = sk[sk.length-1]; if(cur){ cur.data = data; cur.updatedAt = nowISO(); } else sk.push({id:uid(), name:'Sketch 1', data, createdAt:nowISO(), updatedAt:nowISO()}); syncPrimarySketch(f); await saveRecord('onsite', f); render(); };
   return null;
 }
-window.gsbBusy = function(){ try{ return !!STATE.sketchEditor || (STATE.view==='onsite' && STATE.subtab.onsite==='new' && !!document.getElementById('os-clientName') && worksheetHasContent(collectWorksheetForm())) || !!_pcDirty; }catch(e){ return false; } };
+window.gsbBusy = function(){ try{ return !!STATE.sketchEditor || !!STATE.sk2 || (STATE.view==='onsite' && STATE.subtab.onsite==='new' && !!document.getElementById('os-clientName') && worksheetHasContent(collectWorksheetForm())) || !!_pcDirty; }catch(e){ return false; } };
 let _skRecoveryChecked = false;
 function checkSketchRecovery(){
-  if(!STATE.user || !STATE.loaded || STATE.sketchEditor) return;
+  if(!STATE.user || !STATE.loaded || STATE.sketchEditor || STATE.sk2) return;
+  let rec2 = null; try{ rec2 = JSON.parse(localStorage.getItem(SK2_RECOVER_KEY)||'null'); }catch(e){}
+  if(rec2 && rec2.plan){
+    const when2 = new Date(rec2.ts||Date.now()).toLocaleString([], {weekday:'short', hour:'numeric', minute:'2-digit'});
+    if(confirm('The app closed or reloaded while you were drawing a sketch (last auto-saved ' + when2 + ').\n\nOpen the recovered sketch now?\n\nTap OK to open it and press Save. Tap Cancel to decide later.')){
+      const saver2 = sketchSaverFor(rec2.ctx);
+      sk2Open(rec2.plan, false, saver2 || (async ()=>{ alert('Could not find where this sketch belonged, so it was not attached. Open the Sketches tab to add it again.'); }), rec2.ctx);
+      STATE.sk2.dirty = true;
+    }
+    return;
+  }
   let rec = null; try{ rec = JSON.parse(localStorage.getItem(SKETCH_RECOVER_KEY)||'null'); }catch(e){}
   if(!rec || !rec.pages) return;
   const when = new Date(rec.ts||Date.now()).toLocaleString([], {weekday:'short', hour:'numeric', minute:'2-digit'});
@@ -2492,7 +3439,7 @@ function checkSketchRecovery(){
   const saver = sketchSaverFor(rec.ctx);
   openSketchEditor({pages: rec.pages, activePageId: rec.activePageId}, false, saver || (async (data)=>{ alert('Could not find where this sketch belonged, so it was not attached. Open the Sketches tab to add it again.'); }), rec.ctx);
 }
-setInterval(()=>{ if(!_skRecoveryChecked && STATE.user && STATE.loaded && !STATE.sketchEditor){ _skRecoveryChecked = true; setTimeout(checkSketchRecovery, 800); } }, 1500);
+setInterval(()=>{ if(!_skRecoveryChecked && STATE.user && STATE.loaded && !STATE.sketchEditor && !STATE.sk2){ _skRecoveryChecked = true; setTimeout(checkSketchRecovery, 800); } }, 1500);
 function syncActivePageFromState(){
   const s = STATE.sketchEditor;
   const page = s.pages.find(p=>p.id===s.activePageId);
@@ -6031,7 +6978,7 @@ function renderSketchProjectView(f){
       `<div class="photo-grid">${sk.map(x=>`
         <div class="photo-card">
           ${x.data && x.data.snapshot ? `<img src="${x.data.snapshot}">` : ''}
-          <div class="cap-wrap" style="font-size:12.5px;color:var(--ink);"><b>${esc(x.name||'Sketch')}</b><div class="subtle" style="font-size:11px;">${fmtDate(x.updatedAt||x.createdAt)}</div>
+          <div class="cap-wrap" style="font-size:12.5px;color:var(--ink);"><b>${esc(x.name||'Sketch')}</b><div class="subtle" style="font-size:11px;">${fmtDate(String(x.updatedAt||x.createdAt||'').slice(0,10))}</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
               <button type="button" class="btn small" data-action="edit-sketch" data-id="${f.id}" data-sid="${x.id}">Open / Edit</button>
               <button type="button" class="btn ghost small" data-action="rename-sketch" data-id="${f.id}" data-sid="${x.id}">Rename</button>
@@ -8440,6 +9387,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-e</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-g</div>
 </body>
 </html>
