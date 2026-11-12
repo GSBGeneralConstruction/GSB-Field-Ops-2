@@ -280,7 +280,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.12-m';
+const APP_VERSION = 'v2.0-2026.11.12-n';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -3193,6 +3193,21 @@ function sk2BuildDom(){
     #sk2-root .sk2-ctab td.g{font:600 11px Oswald,sans-serif;text-transform:uppercase;letter-spacing:.05em;color:#7A6A45;padding-top:10px;}
     #sk2-root .sk2-ctab td.q{text-align:right;font-weight:700;white-space:nowrap;padding-left:8px;} #sk2-root .sk2-ctab td.q span{font-weight:500;color:#6B6455;font-size:11.5px;}
     #sk2-root .sk2-ctab .n{font-size:11px;color:#8C8576;margin-top:2px;}
+    #sk2-root .sk2-cset{display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;background:#FAF8F3;border:1px solid #E6DFCD;border-radius:8px;padding:8px 10px;font:500 12.5px Inter,sans-serif;color:#4a3f27;cursor:pointer;margin:4px 0 8px;}
+    #sk2-root .sk2-cset span{color:#1F6FD1;font-weight:600;white-space:nowrap;}
+    #sk2-root .sk2-item{border:1px solid #E6DFCD;border-radius:9px;padding:9px 10px;margin:8px 0;background:#fff;}
+    #sk2-root .sk2-item .top{display:flex;align-items:center;gap:9px;}
+    #sk2-root .sk2-item .nm{flex:1;min-width:0;font:600 13px Inter,sans-serif;line-height:1.3;}
+    #sk2-root .sk2-item .q{font:700 22px Inter,sans-serif;color:#2A261E;}
+    #sk2-root .sk2-item .how{font-size:11.5px;color:#8C8576;margin-top:5px;line-height:1.35;}
+    #sk2-root .sk2-item .acts{display:flex;gap:6px;margin-top:6px;}
+    #sk2-root .sk2-item .acts button{background:none;border:0;padding:3px 0;margin-right:10px;font:600 12px Inter,sans-serif;color:#7A6A45;cursor:pointer;}
+    #sk2-root .sk2-find{margin-top:10px;}
+    #sk2-root .sk2-find input{width:100%;box-sizing:border-box;padding:10px;border:1.5px solid #CFC6B0;border-radius:8px;font:16px Inter,sans-serif;}
+    #sk2-root .sk2-find-row{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:#fff;border:1px solid #EEE7D6;border-radius:8px;padding:6px 8px;margin-top:5px;cursor:pointer;font:13px Inter,sans-serif;color:#2A261E;}
+    #sk2-root .sk2-find-row .plus{margin-left:auto;font:700 18px Inter,sans-serif;color:#3F7D4F;}
+    #sk2-root .sk2-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;}
+    #sk2-root .sk2-chips button{background:#F3EFE4;border:1px solid #E1D8C2;border-radius:14px;padding:5px 10px;font:600 11.5px Inter,sans-serif;color:#4a3f27;cursor:pointer;}
     #sk2-root .sk2-presets{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:6px 0;}
     #sk2-root .sk2-presets button{font-size:11.5px;padding:7px 4px;}
     #sk2-root #sk2-tape{position:absolute;left:-9999px;top:0;width:10px;height:10px;opacity:0;}
@@ -3946,109 +3961,188 @@ function sk2Paste(){
   sk2Toast('📋 Pasted next to your drawing — drag it where you want it');
 }
 
-/* ---- materials from what's selected: drywall, studs and the rest (estimates — always round up / check before ordering) ---- */
+/* ---- materials from what's selected: pick items from the materials catalog, the app works out how many ---- */
 function sk2CalcSettings(){
   const S = STATE.sk2;
   if(!S.calc){ let c = {}; try{ c = JSON.parse(localStorage.getItem(SK2_CALC_KEY)||'{}'); }catch(e){}
-    S.calc = Object.assign({ h:96, sp:16, sides:2, sheet:'4x8', stud:'wood', waste:10, openings:true, ceil:false, floorWaste:10 }, c); }
+    S.calc = Object.assign({ h:96, sp:16, sides:2, waste:10, openings:true }, c); }
   return S.calc;
 }
 function sk2SaveCalc(){ try{ localStorage.setItem(SK2_CALC_KEY, JSON.stringify(STATE.sk2.calc)); }catch(e){} }
-function sk2Materials(plan, m, c){
-  const segs = m.segs.map(k=>{ const sh = plan.shapes.find(s=>s.id===k.sid); return (sh && k.seg < sk2SegCount(sh)) ? { sh, seg:k.seg, L:sk2SegLen(sh, k.seg) } : null; }).filter(Boolean);
-  const out = { walls:segs.length, lf:0, rows:[], rooms:[] };
-  const waste = 1 + (Math.max(0, +c.waste||0))/100, up = (x)=> Math.max(0, Math.ceil(x - 1e-9));
-  if(segs.length){
-    const L = segs.reduce((t,x)=>t + x.L, 0), H = c.h, sp = Math.max(4, +c.sp||16);
-    const ops = plan.openings.filter(o=>segs.some(x=>x.sh.id===o.sid && x.seg===o.seg));
-    const doors = ops.filter(o=>o.type!=='window'), wins = ops.filter(o=>o.type==='window');
-    const doorW = doors.reduce((t,o)=>t+o.w, 0);
-    const opArea = c.openings ? (doors.reduce((t,o)=>t + o.w*Math.min(80, H), 0) + wins.reduce((t,o)=>t + o.w*Math.min(48, H), 0)) : 0;   // doors 6'8", windows 4' tall
-    const oneSide = Math.max(0, (L*H - opArea)/144), dwArea = oneSide * c.sides;
-    out.lf = L/12;
-    const metal = c.stud==='metal';
-    // studs: one every "spacing" plus the end one on each wall, 2 more around each door / window
-    let studs = 0; segs.forEach(x=>{ studs += Math.ceil(x.L/sp - 1e-9) + 1; });
-    studs += ops.length*2;
-    const studsTot = up(studs*waste);
-    const studLen = H <= 96 ? (metal ? "8'" : "8' (92 5/8\" precut)") : sk2Fmt(Math.ceil(H/12)*12);
-    out.rows.push({ g:'Framing', label:(metal ? 'Metal studs' : '2x4 studs')+' — '+sp+'" apart', qty:studsTot, unit:'studs', note:studLen+' long · '+studs+' + '+(c.waste||0)+'% extra'+(ops.length ? ' · includes 2 extra at each of the '+ops.length+' door/window'+(ops.length===1?'':'s') : '') });
-    const runs = metal ? 2 : 3, stick = metal ? 10 : 8;
-    const plateLF = (L*runs - doorW)/12;
-    out.rows.push({ g:'Framing', label: metal ? 'Track (top + bottom), 10\' pieces' : 'Plates (bottom + double top), 8\' boards', qty:up(plateLF*waste/stick), unit:'pcs', note:plateLF.toFixed(1)+' LF' });
-    out.rows.push({ g:'Framing', label: metal ? 'Framing screws (#8 pan head)' : 'Framing nails (16d)', qty:up(studsTot*4 + (metal ? 0 : plateLF*0.75)), unit:'pcs', note: metal ? '4 per stud' : '4 per stud + top plates every 16"' });
-    out.rows.push({ g:'Framing', label:'Slab anchors / shot pins (bottom '+(metal?'track':'plate')+')', qty:up((L - doorW)/24 + segs.length), unit:'pcs', note:'1 every 24" + 1 at each end' });
-    const sheetA = { '4x8':32, '4x10':40, '4x12':48 }[c.sheet] || 32;
-    const sheets = up(dwArea*waste/sheetA);
-    out.rows.push({ g:'Drywall', label:'Drywall sheets '+c.sheet.replace('x',"'×")+"'", qty:sheets, unit:'sheets', note:dwArea.toFixed(0)+' sq ft ('+c.sides+' side'+(c.sides==1?'':'s')+(c.openings && ops.length ? ', doors/windows taken out' : '')+') + '+(c.waste||0)+'%' });
-    out.rows.push({ g:'Drywall', label:'Drywall screws 1-1/4"', qty:up(dwArea*waste*(16/sp)), unit:'pcs', note:'about '+Math.max(1, up(dwArea*waste*(16/sp)/300))+' lb' });
-    out.rows.push({ g:'Drywall', label:'Joint compound (4.5 gal box/bucket)', qty:up(dwArea/450), unit:'buckets', note:'about 1 per 450 sq ft' });
-    out.rows.push({ g:'Drywall', label:'Joint tape (500\' roll)', qty:up(dwArea*0.37/500), unit:'rolls', note:(dwArea*0.37).toFixed(0)+' LF' });
-    out.rows.push({ g:'Finish', label:'Insulation (wall cavities)', qty:up(oneSide), unit:'sq ft', note:'one side of the walls' });
-    out.rows.push({ g:'Finish', label:'Primer (1 coat)', qty:up(dwArea/300), unit:'gal', note:'about 300 sq ft per gallon' });
-    out.rows.push({ g:'Finish', label:'Paint (2 coats)', qty:up(dwArea*2/350), unit:'gal', note:'about 350 sq ft per gallon' });
-    out.rows.push({ g:'Finish', label:'Baseboard', qty:up((L - doorW)*c.sides*waste/12), unit:'LF', note:'doors taken out · '+c.sides+' side'+(c.sides==1?'':'s') });
-    out.ops = ops.length;
-  }
-  const rooms = sk2SyncRooms(plan).filter(r=>m.rooms.includes(r.id));
-  if(rooms.length){
-    const fw = 1 + (Math.max(0, +c.floorWaste||0))/100;
-    const area = rooms.reduce((t,r)=>t + r._f.net/144, 0);
-    out.rooms = rooms.map(r=>r.name);
-    out.rows.push({ g:'Rooms', label:'Floor area', qty:+area.toFixed(1), unit:'sq ft', note:rooms.map(r=>r.name+' '+(r._f.net/144).toFixed(1)).join(' · ') });
-    out.rows.push({ g:'Rooms', label:'Flooring / tile to order', qty:up(area*fw), unit:'sq ft', note:'+'+(c.floorWaste||0)+'% for cuts' });
-    out.rows.push({ g:'Rooms', label:'Thinset / tile adhesive (50 lb bag)', qty:up(area/90), unit:'bags', note:'about 90 sq ft per bag (1/4" trowel)' });
-    out.rows.push({ g:'Rooms', label:'Grout (25 lb bag)', qty:up(area/200), unit:'bags', note:'rough — depends on tile size and joint' });
-    if(c.ceil){ const sheetA = { '4x8':32, '4x10':40, '4x12':48 }[c.sheet] || 32; out.rows.push({ g:'Rooms', label:'Ceiling drywall '+c.sheet.replace('x',"'×")+"'", qty:up(area*waste/sheetA), unit:'sheets', note:area.toFixed(0)+' sq ft + '+(c.waste||0)+'%' }); }
-  }
-  return out;
+/* the picked items live with the sketch (and the last list is remembered for the next sketch) */
+function sk2CalcItems(){
+  const S = STATE.sk2, plan = S.plan;
+  if(!Array.isArray(plan.calcItems)){ let last = []; try{ last = JSON.parse(localStorage.getItem(SK2_CALC_KEY+'-items')||'[]'); }catch(e){} plan.calcItems = Array.isArray(last) ? last.filter(x=>DB.materials.some(m=>m.id===x.mid)) : []; }
+  return plan.calcItems;
 }
-function sk2Unit(x){ return (x.qty===1 && /s$/.test(x.unit) && x.unit!=='pcs') ? x.unit.slice(0,-1) : x.unit; }
+function sk2SaveItems(){ const S = STATE.sk2; S.dirty = true; try{ localStorage.setItem(SK2_CALC_KEY+'-items', JSON.stringify(S.plan.calcItems||[])); }catch(e){} }
+/* how each kind of item is counted */
+const SK2_METHODS = {
+  sheets:  { label:'Sheets on the walls',           p:'Sq ft per sheet' },
+  ceiling: { label:'Sheets on the ceiling',         p:'Sq ft per sheet' },
+  studs:   { label:'Studs (uses stud spacing)',     p:'Length of one stud (ft)' },
+  track:   { label:'Track / plates along the walls',p:'Length of one piece (ft)', p2:'Rows (2 = top+bottom, 3 = bottom + double top)' },
+  wall:    { label:'Covers wall area',              p:'Sq ft covered by one' },
+  cavity:  { label:'Fills the wall (insulation)',   p:'Sq ft covered by one' },
+  floor:   { label:'Covers floor area',             p:'Sq ft covered by one' },
+  lf:      { label:'Runs along the walls',          p:'Feet in one piece' },
+  perstud: { label:'So many per stud',              p:'How many per stud', p2:'How many in one box / pack' },
+  anchors: { label:'Anchors along the bottom',      p:'Inches apart', p2:'How many in one box' },
+  doors:   { label:'One per door' },
+  windows: { label:'One per window' },
+  manual:  { label:'I\'ll type the amount',         p:'Amount' },
+};
+function sk2Num(re, t, def){ const m = t.match(re); return m ? parseFloat(m[1]) : def; }
+function sk2GuessMethod(m){
+  const name = (m.name||'').toLowerCase(), size = (m.size||'').toLowerCase(), t = ((m.category||'')+' '+name+' '+size).toLowerCase();
+  const sheet = (m.size+' '+m.name).match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/i), sheetA = sheet ? (+sheet[1])*(+sheet[2]) : 32;
+  const lenFt = sk2Num(/(\d+(?:\.\d+)?)\s*(?:ft|')\b/, size, 8);
+  const gal = sk2Num(/(\d+(?:\.\d+)?)\s*gal/, size, 0), lb = sk2Num(/(\d+(?:\.\d+)?)\s*lb/, size, 0);
+  const boxOf = sk2Num(/(?:box of|pack of|of)\s*(\d+)/, size, sk2Num(/(\d+)\s*pack/, size, 0));
+  if(/ceiling tile/.test(t)) return { method:'floor', p:sheetA || 8 };
+  if(/ceiling board|ceiling/.test(name) && /sheet/.test(size)) return { method:'ceiling', p:sheetA };
+  if(/screw|nail|clip|bridging|hanger|anchor|pin|bolt|tie/.test(name)){
+    if(/drywall screw|cement board screw|board screw/.test(name)) return { method:'wall', p: Math.round((lb||1)*300) };   // about 1 screw per sq ft, ~300 per lb
+    if(/powder|pins|expansion anchor|concrete|tapcon/.test(name)) return { method:'anchors', p:24, p2: boxOf || 100 };
+    if(/self-drilling|wafer|pan head|framing screw|stud clip|bridging/.test(name)) return { method:'perstud', p:4, p2: boxOf || 1000 };
+    if(/framing nail|collated|16d|10d/.test(name)) return { method:'perstud', p:6, p2: boxOf || Math.round((lb||5)*45) };
+  }
+  if(/sheet/.test(size) && /drywall|board|plywood|osb|sheathing|mdf|hardboard|foam|masonite|zip/.test(t)) return { method:'sheets', p:sheetA };
+  if(/\btrack\b|plate/.test(name)) return { method:'track', p:lenFt, p2: /track/.test(name) ? 2 : 3 };
+  if(/\bstud\b/.test(name) || (/lumber/.test(t) && /^2x(4|6)\b/.test(name.trim()) && /ft/.test(size))) return { method:'studs', p:lenFt };
+  if(/joint compound|all-purpose|compound|hot mud|skim|spackle/.test(name)) return { method:'wall', p: gal ? Math.round(gal*100) : (lb ? Math.round(lb*8) : 400) };
+  if(/tape/.test(name) && /roll/.test(size)) return { method:'wall', p: Math.round(sk2Num(/(\d+)\s*ft/, size, 500)/0.37) };
+  if(/primer/.test(t)) return { method:'wall', p: Math.round((gal||1)*300) };
+  if(/paint/.test(t)) return { method:'wall', p: Math.round((gal||1)*175) };            // 2 coats at ~350 sq ft per gallon
+  if(/insulation|batt|fiberglass/.test(t) && !/sealant/.test(name)) return { method:'cavity', p: /sheet/.test(size) ? sheetA : 40 };
+  if(/sealant|caulk/.test(name)) return { method:'lf', p:25 };
+  if(/thinset|mortar/.test(name)) return { method:'floor', p: lb ? Math.round(lb*1.8) : 90 };
+  if(/grout/.test(name)) return { method:'floor', p:200 };
+  if(/redgard|waterproof|membrane/.test(name)) return { method:'floor', p: Math.round((gal||1)*50) };
+  if(/self.?level/.test(name)) return { method:'floor', p:50 };
+  if(/tile|flooring|laminate|vinyl plank|carpet|underlayment/.test(t)) return { method:'floor', p: /sq ?ft|sf/.test(size) ? sk2Num(/(\d+(?:\.\d+)?)\s*sq/, size, 1) : 1 };
+  if(/baseboard|casing|crown|molding|moulding|trim|quarter round|shoe|chair rail/.test(name)) return { method:'lf', p:lenFt };
+  if(/\bdoor\b/.test(name)) return { method:'doors' };
+  if(/window/.test(name)) return { method:'windows' };
+  if(/bead|corner/.test(name)) return { method:'manual', p:0 };
+  if(/lumber|framing/.test(t) && /ft/.test(size)) return { method:'studs', p:lenFt };
+  return { method:'manual', p:1 };
+}
+/* what the selected walls / rooms add up to */
+function sk2CalcCtx(plan, m, c){
+  const segs = m.segs.map(k=>{ const sh = plan.shapes.find(s=>s.id===k.sid); return (sh && k.seg < sk2SegCount(sh)) ? { sh, seg:k.seg, L:sk2SegLen(sh, k.seg) } : null; }).filter(Boolean);
+  const L = segs.reduce((t,x)=>t + x.L, 0), H = c.h, sp = Math.max(4, +c.sp||16);
+  const ops = plan.openings.filter(o=>segs.some(x=>x.sh.id===o.sid && x.seg===o.seg));
+  const doors = ops.filter(o=>o.type!=='window'), wins = ops.filter(o=>o.type==='window');
+  const doorW = doors.reduce((t,o)=>t+o.w, 0);
+  const opArea = c.openings ? (doors.reduce((t,o)=>t + o.w*Math.min(80, H), 0) + wins.reduce((t,o)=>t + o.w*Math.min(48, H), 0)) : 0;
+  let studs = 0; segs.forEach(x=>{ studs += Math.ceil(x.L/sp - 1e-9) + 1; }); studs += ops.length*2;
+  const rooms = sk2SyncRooms(plan).filter(r=>m.rooms.includes(r.id));
+  const oneSide = Math.max(0, (L*H - opArea)/144);
+  return { walls:segs.length, L, H, sp, sides:c.sides, studs, doors:doors.length, wins:wins.length, doorW, oneSide, wallSqft:oneSide*c.sides,
+    floor: rooms.reduce((t,r)=>t + r._f.net/144, 0), rooms, waste: 1 + Math.max(0, +c.waste||0)/100, wastePct: Math.max(0, +c.waste||0) };
+}
+function sk2ItemQty(it, x){
+  const up = (v)=> Math.max(0, Math.ceil(v - 1e-9)), w = x.waste, p = +it.p || 0, p2 = +it.p2 || 0, pct = x.wastePct ? ' + '+x.wastePct+'%' : '';
+  const sf = (v)=> Math.round(v).toLocaleString();
+  const needWalls = (r)=> x.walls ? r : { qty:0, how:'Select walls to count this' };
+  switch(it.method){
+    case 'sheets':  return needWalls({ qty: p ? up(x.wallSqft*w/p) : 0, how: sf(x.wallSqft)+' sq ft of wall ('+(x.sides==1?'1 side':'both sides')+') ÷ '+p+' sq ft a sheet'+pct });
+    case 'ceiling': return x.floor ? { qty: p ? up(x.floor*w/p) : 0, how: sf(x.floor)+' sq ft of ceiling ÷ '+p+' sq ft a sheet'+pct } : { qty:0, how:'Select a whole room to count the ceiling' };
+    case 'studs': { const short = p && p*12 < x.H - 0.5 ? ' ⚠ '+p+' ft is shorter than the '+sk2Fmt(x.H)+' walls' : '';
+      return needWalls({ qty: up(x.studs*w), how: 'One every '+x.sp+'" + the end of each wall + 2 at each door/window = '+x.studs+pct+short }); }
+    case 'track': { const rows = p2 || 2, lf = (x.L*rows - x.doorW)/12; return needWalls({ qty: p ? up(lf*w/p) : 0, how: rows+' rows along '+(x.L/12).toFixed(1)+' LF (doors left open) = '+lf.toFixed(0)+' LF ÷ '+p+' ft pieces'+pct }); }
+    case 'wall':    return needWalls({ qty: p ? up(x.wallSqft*w/p) : 0, how: sf(x.wallSqft)+' sq ft of wall ÷ '+sf(p)+' sq ft each'+pct });
+    case 'cavity':  return needWalls({ qty: p ? up(x.oneSide*w/p) : 0, how: sf(x.oneSide)+' sq ft of wall (one side) ÷ '+sf(p)+' sq ft each'+pct });
+    case 'floor':   return x.floor ? { qty: p ? up(x.floor*w/p) : 0, how: sf(x.floor)+' sq ft of floor ÷ '+sf(p)+' sq ft each'+pct } : { qty:0, how:'Select a whole room to count the floor' };
+    case 'lf': { const lf = (x.L - x.doorW)/12*x.sides; return needWalls({ qty: p ? up(lf*w/p) : 0, how: lf.toFixed(0)+' LF ('+(x.sides==1?'1 side':'both sides')+', doors left out) ÷ '+p+' ft each'+pct }); }
+    case 'perstud': { const n = up(x.studs*w)*p; return needWalls({ qty: p2 ? up(n/p2) : n, how: p+' per stud × '+up(x.studs*w)+' studs = '+n.toLocaleString()+(p2 ? ' ÷ '+p2.toLocaleString()+' a box' : '') }); }
+    case 'anchors': { const n = up((x.L - x.doorW)/(p||24) + x.walls); return needWalls({ qty: p2 ? up(n/p2) : n, how: 'One every '+(p||24)+'" + one at each end = '+n+(p2 ? ' ÷ '+p2+' a box' : '') }); }
+    case 'doors':   return { qty: x.doors, how: x.doors+' door'+(x.doors===1?'':'s')+' on the selected walls' };
+    case 'windows': return { qty: x.wins, how: x.wins+' window'+(x.wins===1?'':'s')+' on the selected walls' };
+    default:        return { qty: p, how: 'Amount you typed' };
+  }
+}
+function sk2ItemLabel(mm){ return mm ? mm.name + (mm.size ? ' — '+mm.size : '') : 'Item removed from the catalog'; }
+function sk2FindHTML(q){
+  q = String(q||'').trim().toLowerCase(); if(!q) return '';
+  const words = q.split(/\s+/);
+  const list = DB.materials.filter(m=>{ const t = (m.name+' '+(m.size||'')+' '+(m.category||'')).toLowerCase(); return words.every(w=>t.includes(w)); }).slice(0, 12);
+  if(!list.length) return `<div class="sub" style="padding:6px 2px;">Nothing in the catalog matches "${esc(q)}".</div>`;
+  return list.map(m=>`<button type="button" class="sk2-find-row" data-sk2c-add="${m.id}">${matThumbHTML(m, 30)}<span><b>${esc(m.name)}</b>${m.size?`<br><span class="sub">${esc(m.size)}</span>`:''}</span><span class="plus">+</span></button>`).join('');
+}
 function sk2CalcHTML(plan, m){
-  const c = sk2CalcSettings(), r = sk2Materials(plan, m, c);
-  if(!r.rows.length) return `<div class="sk2-calc"><h4>🧮 Materials</h4><p class="sub">Select walls or rooms to see drywall, studs and the rest.</p></div>`;
+  const c = sk2CalcSettings(), x = sk2CalcCtx(plan, m, c), items = sk2CalcItems(), S = STATE.sk2;
+  if(!x.walls && !x.rooms.length) return `<div class="sk2-calc"><h4>🧮 How much material?</h4><p class="sub">Select walls or a room to count materials for them.</p></div>`;
   const opt = (v, cur, label)=>`<option value="${v}" ${String(v)===String(cur)?'selected':''}>${label}</option>`;
-  let g = '', rows = '';
-  r.rows.forEach(x=>{ if(x.g!==g){ g = x.g; rows += `<tr><td colspan="2" class="g">${esc(g)}</td></tr>`; } rows += `<tr><td>${esc(x.label)}<div class="n">${esc(x.note||'')}</div></td><td class="q">${x.qty.toLocaleString()} <span>${esc(sk2Unit(x))}</span></td></tr>`; });
-  return `<div class="sk2-calc">
-    <h4>🧮 Materials</h4>
-    <p class="sub">${r.walls ? `${r.walls} wall${r.walls===1?'':'s'} · <b>${r.lf.toFixed(1)} LF</b>${r.ops ? ' · '+r.ops+' door/window'+(r.ops===1?'':'s') : ''}` : ''}${r.rooms.length ? (r.walls?'<br>':'')+'Rooms: '+esc(r.rooms.join(', ')) : ''}</p>
-    ${r.walls ? `<div class="sk2-cgrid">
+  const facts = [x.walls ? `<b>${(x.L/12).toFixed(1)} LF</b> of wall` : '', x.walls ? `<b>${Math.round(x.wallSqft)}</b> sq ft to cover` : '', x.rooms.length ? `<b>${x.floor.toFixed(1)}</b> sq ft of floor` : ''].filter(Boolean).join(' · ');
+  const settings = x.walls ? (S.calcSet ? `<div class="sk2-cgrid">
       <label>Wall height<input id="sk2c-h" value="${esc(sk2Fmt(c.h))}" autocomplete="off"></label>
       <label>Stud spacing (inches)<input id="sk2c-sp" type="number" inputmode="decimal" min="4" step="any" value="${c.sp}"></label>
-      <label>Studs<select id="sk2c-stud">${opt('wood',c.stud,'Wood 2x4')}${opt('metal',c.stud,'Metal studs')}</select></label>
-      <label>Drywall sheets<select id="sk2c-sheet">${opt('4x8',c.sheet,"4' × 8'")}${opt('4x10',c.sheet,"4' × 10'")}${opt('4x12',c.sheet,"4' × 12'")}</select></label>
-      <label>Drywall on<select id="sk2c-sides">${opt(1,c.sides,'1 side')}${opt(2,c.sides,'Both sides')}</select></label>
+      <label>Cover walls on<select id="sk2c-sides">${opt(1,c.sides,'1 side')}${opt(2,c.sides,'Both sides')}</select></label>
       <label>Extra for waste %<input id="sk2c-waste" type="number" inputmode="decimal" min="0" step="1" value="${c.waste}"></label>
     </div>
-    <label class="sk2-cchk"><input type="checkbox" id="sk2c-ops" ${c.openings?'checked':''}> Take doors &amp; windows out of the drywall</label>` : ''}
-    ${r.rooms.length ? `<div class="sk2-cgrid">
-      <label>Flooring waste %<input id="sk2c-fw" type="number" inputmode="decimal" min="0" step="1" value="${c.floorWaste}"></label>
-      <label class="sk2-cchk" style="align-self:end;"><input type="checkbox" id="sk2c-ceil" ${c.ceil?'checked':''}> Ceiling drywall too</label>
-    </div>` : ''}
-    <table class="sk2-ctab">${rows}</table>
-    <div class="sk2-row"><button class="sk2-b" data-sk2p="calccopy">📄 Copy this list (to paste in an estimate)</button></div>
-    <p class="sub" style="font-size:11.5px;">These are quick estimates rounded up — double-check before ordering.</p>
+    <label class="sk2-cchk"><input type="checkbox" id="sk2c-ops" ${c.openings?'checked':''}> Leave out doors &amp; windows</label>
+    <button type="button" class="sk2-b" data-sk2p="calcset" style="width:100%;">✓ Done</button>`
+    : `<button type="button" class="sk2-cset" data-sk2p="calcset">Walls ${esc(sk2Fmt(c.h))} high · studs ${c.sp}" apart · ${c.sides==1?'1 side':'both sides'} · +${c.waste}% waste<span>Change</span></button>`) : '';
+  const rows = items.map((it, i)=>{
+    const mm = DB.materials.find(z=>z.id===it.mid), r = sk2ItemQty(it, x), def = SK2_METHODS[it.method] || SK2_METHODS.manual, open = S.calcEdit===i;
+    return `<div class="sk2-item">
+      <div class="top">${matThumbHTML(mm, 34)}<div class="nm">${esc(sk2ItemLabel(mm))}</div><div class="q">${r.qty.toLocaleString()}</div></div>
+      <div class="how">${esc(r.how)}</div>
+      ${open ? `<div class="sk2-cgrid" style="margin-top:6px;">
+          <label style="grid-column:1/-1;">Count it as<select data-sk2c-method="${i}">${Object.keys(SK2_METHODS).map(k=>opt(k, it.method, SK2_METHODS[k].label)).join('')}</select></label>
+          ${def.p ? `<label>${esc(def.p)}<input type="number" inputmode="decimal" step="any" min="0" data-sk2c-p="${i}" value="${it.p ?? ''}"></label>` : ''}
+          ${def.p2 ? `<label>${esc(def.p2)}<input type="number" inputmode="decimal" step="any" min="0" data-sk2c-p2="${i}" value="${it.p2 ?? ''}"></label>` : ''}
+        </div>` : ''}
+      <div class="acts"><button type="button" data-sk2p="calcedit" data-i="${i}">${open ? '✓ Done' : '⚙ How it\'s counted'}</button><button type="button" data-sk2p="calcdel" data-i="${i}">✕ Remove</button></div>
+    </div>`;
+  }).join('');
+  const quick = ['Drywall','Stud','Track','Screws','Joint compound','Tape','Paint','Insulation','Baseboard','Tile','Thinset'];
+  return `<div class="sk2-calc">
+    <h4>🧮 How much material?</h4>
+    <p class="sub">${facts}</p>
+    ${settings}
+    ${rows || `<p class="sub" style="margin-top:10px;">Add materials from your catalog — the app works out how many you need for what's selected.</p>`}
+    <div class="sk2-find">
+      <input id="sk2c-find" type="search" placeholder="➕ Add a material — type drywall, stud, screws…" autocomplete="off" value="${esc(S.calcQ||'')}">
+      <div id="sk2c-results">${sk2FindHTML(S.calcQ)}</div>
+      ${S.calcQ ? '' : `<div class="sk2-chips">${quick.map(w=>`<button type="button" data-sk2c-q="${w}">${w}</button>`).join('')}</div>`}
+    </div>
+    ${items.length ? `<div class="sk2-row"><button class="sk2-b" data-sk2p="calccopy">📄 Copy this list (to paste in an estimate)</button></div>
+    <p class="sub" style="font-size:11.5px;">Quick estimates, rounded up — double-check before ordering. Tap ⚙ to change how any item is counted.</p>` : ''}
   </div>`;
 }
 function sk2CalcText(plan, m){
-  const c = sk2CalcSettings(), r = sk2Materials(plan, m, c);
-  let g = '', t = 'MATERIALS — '+(r.walls ? r.walls+' walls, '+r.lf.toFixed(1)+' LF, '+sk2Fmt(c.h)+' high, studs '+c.sp+'" apart' : '')+(r.rooms.length ? (r.walls?' · ':'')+'rooms: '+r.rooms.join(', ') : '')+'\n';
-  r.rows.forEach(x=>{ if(x.g!==g){ g = x.g; t += '\n'+g.toUpperCase()+'\n'; } t += '- '+x.label+': '+x.qty.toLocaleString()+' '+sk2Unit(x)+(x.note ? '  ('+x.note+')' : '')+'\n'; });
+  const c = sk2CalcSettings(), x = sk2CalcCtx(plan, m, c);
+  let t = 'MATERIALS — '+[x.walls ? (x.L/12).toFixed(1)+' LF of wall, '+sk2Fmt(c.h)+' high, studs '+c.sp+'" apart' : '', x.rooms.length ? 'rooms: '+x.rooms.map(r=>r.name).join(', ')+' ('+x.floor.toFixed(1)+' sq ft)' : ''].filter(Boolean).join(' · ')+'\n';
+  sk2CalcItems().forEach(it=>{ const mm = DB.materials.find(z=>z.id===it.mid), r = sk2ItemQty(it, x); t += '- '+sk2ItemLabel(mm)+': '+r.qty.toLocaleString()+'  ('+r.how+')\n'; });
   return t;
 }
 function sk2BindCalc(){
-  const S = STATE.sk2, c = sk2CalcSettings();
+  const S = STATE.sk2, c = sk2CalcSettings(), items = sk2CalcItems();
   const on = (id, fn)=>{ const el = document.getElementById(id); if(el) el.addEventListener('change', ()=>{ fn(el); sk2SaveCalc(); sk2Panel(); }); };
   on('sk2c-h', (el)=>{ const v = sk2ParseLen(el.value); if(v && v > 12) c.h = v; else sk2Toast('Type a wall height like 8\' or 9\' 6"'); });
   on('sk2c-sp', (el)=>{ const v = parseFloat(String(el.value).replace(/[^0-9.]/g,'')); if(v >= 4) c.sp = v; else sk2Toast('Stud spacing has to be at least 4"'); });
-  on('sk2c-stud', (el)=>{ c.stud = el.value; });
-  on('sk2c-sheet', (el)=>{ c.sheet = el.value; });
   on('sk2c-sides', (el)=>{ c.sides = +el.value; });
   on('sk2c-waste', (el)=>{ const v = parseFloat(el.value); c.waste = isFinite(v) && v >= 0 ? v : 0; });
-  on('sk2c-fw', (el)=>{ const v = parseFloat(el.value); c.floorWaste = isFinite(v) && v >= 0 ? v : 0; });
   on('sk2c-ops', (el)=>{ c.openings = el.checked; });
-  on('sk2c-ceil', (el)=>{ c.ceil = el.checked; });
+  const panel = document.getElementById('sk2-panel'); if(!panel) return;
+  const find = document.getElementById('sk2c-find');
+  if(find) find.addEventListener('input', ()=>{ S.calcQ = find.value; const r = document.getElementById('sk2c-results'); if(r) r.innerHTML = sk2FindHTML(S.calcQ); const ch = panel.querySelector('.sk2-chips'); if(ch) ch.style.display = S.calcQ ? 'none' : ''; });
+  panel.querySelectorAll('[data-sk2c-q]').forEach(b=>b.addEventListener('click', ()=>{ S.calcQ = b.dataset.sk2cQ; sk2Panel(); const f2 = document.getElementById('sk2c-find'); if(f2){ f2.focus(); f2.setSelectionRange(f2.value.length, f2.value.length); } }));
+  const res = document.getElementById('sk2c-results');
+  if(res) res.addEventListener('click', (e)=>{
+    const b = e.target.closest('[data-sk2c-add]'); if(!b) return;
+    const mm = DB.materials.find(z=>z.id===b.dataset.sk2cAdd); if(!mm) return;
+    if(items.some(it=>it.mid===mm.id)){ sk2Toast('Already on the list'); return; }
+    items.push(Object.assign({ mid:mm.id }, sk2GuessMethod(mm))); S.calcQ = ''; sk2SaveItems(); sk2Panel();
+    sk2Toast('✓ Added '+mm.name+' — tap ⚙ if it should be counted differently');
+  });
+  panel.querySelectorAll('[data-sk2c-method]').forEach(el=>el.addEventListener('change', ()=>{ const it = items[+el.dataset.sk2cMethod]; if(!it) return; it.method = el.value;
+    const mm = DB.materials.find(z=>z.id===it.mid), g = mm ? sk2GuessMethod(mm) : {}; if(g.method===it.method){ it.p = g.p; it.p2 = g.p2; } else { const d = { sheets:32, ceiling:32, studs:8, track:10, wall:300, cavity:40, floor:1, lf:8, perstud:4, anchors:24, manual:1 }; it.p = d[it.method] ?? it.p; it.p2 = it.method==='track' ? 2 : it.method==='perstud' ? 1000 : it.method==='anchors' ? 100 : undefined; }
+    sk2SaveItems(); sk2Panel(); }));
+  panel.querySelectorAll('[data-sk2c-p],[data-sk2c-p2]').forEach(el=>el.addEventListener('change', ()=>{ const k = el.dataset.sk2cP!=null ? 'p' : 'p2', it = items[+(el.dataset.sk2cP!=null ? el.dataset.sk2cP : el.dataset.sk2cP2)]; if(!it) return; const v = parseFloat(el.value); it[k] = isFinite(v) && v >= 0 ? v : 0; sk2SaveItems(); sk2Panel(); }));
 }
 function sk2Push(){ const S = STATE.sk2; S.undo.push(JSON.stringify(S.plan)); if(S.undo.length > 60) S.undo.shift(); }
 function sk2Select(h){
@@ -4238,6 +4332,9 @@ function sk2Panel(){
 function sk2PanelAction(a, btn){
   const S = STATE.sk2, plan = S.plan, sel = S.sel;
   if(a==='mcopy'){ sk2Copy(); return; }
+  if(a==='calcset'){ S.calcSet = !S.calcSet; sk2Panel(); return; }
+  if(a==='calcedit'){ const i = +btn.dataset.i; S.calcEdit = (S.calcEdit===i ? null : i); sk2Panel(); return; }
+  if(a==='calcdel'){ const items = sk2CalcItems(), i = +btn.dataset.i; items.splice(i, 1); S.calcEdit = null; sk2SaveItems(); sk2Panel(); return; }
   if(a==='calcsel'){ const m = sk2CurrentSet(); S.tool = 'multi'; sk2SetMulti(m); return; }
   if(a==='calccopy'){ const t = sk2CalcText(plan, S.multi||sk2EmptySet()); const done = ()=>sk2Toast('📄 Materials list copied — paste it into the estimate or a note');
     if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, ()=>{ prompt('Copy this list:', t); }); else prompt('Copy this list:', t); return; }
@@ -10606,6 +10703,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-m</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-n</div>
 </body>
 </html>
