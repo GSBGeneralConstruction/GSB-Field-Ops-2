@@ -280,7 +280,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.12-k';
+const APP_VERSION = 'v2.0-2026.11.12-l';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -3180,6 +3180,19 @@ function sk2BuildDom(){
     #sk2-root .sk2-tapebox.off{border-color:#CFC6B0;background:#FAF8F3;color:#6B6455;}
     #sk2-root .sk2-list{border-top:1px solid #EEE;margin-top:6px;}
     #sk2-root .sk2-list div{display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid #EEE;font-size:13px;cursor:pointer;}
+    #sk2-root .sk2-calc{border-top:2px solid #EFE9DB;margin-top:12px;padding-top:10px;}
+    #sk2-root .sk2-calc h4{font-family:Oswald,sans-serif;font-size:15px;margin:0 0 4px;}
+    #sk2-root .sk2-cgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 8px;margin:6px 0;}
+    #sk2-root .sk2-cgrid label{font:600 10.5px Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em;color:#6B6455;display:flex;flex-direction:column;gap:3px;}
+    #sk2-root .sk2-cgrid input, #sk2-root .sk2-cgrid select{width:100%;box-sizing:border-box;padding:8px;border:1.5px solid #CFC6B0;border-radius:7px;font:16px Inter,sans-serif;text-transform:none;letter-spacing:0;color:#2A261E;background:#fff;}
+    #sk2-root .sk2-cchk{display:flex;align-items:center;gap:6px;font-size:12.5px;color:#4a3f27;margin:4px 0;}
+    #sk2-root .sk2-cgrid label.sk2-cchk{flex-direction:row;align-items:center;text-transform:none;letter-spacing:0;font:500 12.5px Inter,sans-serif;color:#4a3f27;}
+    #sk2-root .sk2-cgrid label.sk2-cchk input{width:auto;}
+    #sk2-root .sk2-ctab{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0;}
+    #sk2-root .sk2-ctab td{padding:6px 0;border-bottom:1px solid #EEE;vertical-align:top;}
+    #sk2-root .sk2-ctab td.g{font:600 11px Oswald,sans-serif;text-transform:uppercase;letter-spacing:.05em;color:#7A6A45;padding-top:10px;}
+    #sk2-root .sk2-ctab td.q{text-align:right;font-weight:700;white-space:nowrap;padding-left:8px;} #sk2-root .sk2-ctab td.q span{font-weight:500;color:#6B6455;font-size:11.5px;}
+    #sk2-root .sk2-ctab .n{font-size:11px;color:#8C8576;margin-top:2px;}
     #sk2-root .sk2-presets{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:6px 0;}
     #sk2-root .sk2-presets button{font-size:11.5px;padding:7px 4px;}
     #sk2-root #sk2-tape{position:absolute;left:-9999px;top:0;width:10px;height:10px;opacity:0;}
@@ -3204,7 +3217,7 @@ function sk2BuildDom(){
   </div>
   <div class="sk2-body">
     ${S.readOnly ? '' : `<div class="sk2-tools">
-      ${toolBtn('draw','✏️','Draw walls')}${toolBtn('select','👆','Select / move')}${toolBtn('area','⬚','Select area')}${toolBtn('door','🚪','Door')}${toolBtn('window','🪟','Window')}
+      ${toolBtn('draw','✏️','Draw walls')}${toolBtn('select','👆','Select / move')}${toolBtn('area','⬚','Drag select')}${toolBtn('multi','☑️','Multi-select')}${toolBtn('door','🚪','Door')}${toolBtn('window','🪟','Window')}
       ${toolBtn('box','⬛','Box')}${toolBtn('column','<span style="color:#D32F2F">■</span>','Column')}${toolBtn('note','📝','Note')}${toolBtn('dim','↔️','Measuring line')}${toolBtn('pick','📐','Add up LF')}
     </div>`}
     <div class="sk2-canvas-wrap"><canvas id="sk2-canvas"></canvas><div class="sk2-hint" id="sk2-hint"></div><div class="sk2-toast" id="sk2-toast"></div>
@@ -3216,7 +3229,7 @@ function sk2BuildDom(){
   cv.addEventListener('pointerdown', sk2Down); cv.addEventListener('pointermove', sk2Move);
   cv.addEventListener('pointerup', sk2Up); cv.addEventListener('pointercancel', sk2Up);
   cv.addEventListener('wheel', (e)=>{ e.preventDefault(); sk2ZoomAt(e.offsetX, e.offsetY, e.deltaY<0 ? 1.12 : 1/1.12); }, {passive:false});
-  root.querySelectorAll('[data-sk2-tool]').forEach(b=>b.addEventListener('click', ()=>{ S.tool = b.dataset.sk2Tool; S.dimStart = null; if(S.tool!=='area') S.multi = null; if(S.tool!=='pick') S.picks = []; if(S.tool==='pick'){ S.sel = null; } sk2Draw(); sk2Panel(); }));
+  root.querySelectorAll('[data-sk2-tool]').forEach(b=>b.addEventListener('click', ()=>{ S.tool = b.dataset.sk2Tool; S.dimStart = null; if(S.tool!=='area' && S.tool!=='multi') S.multi = null; if(S.tool!=='pick') S.picks = []; if(S.tool==='pick'){ S.sel = null; } sk2Draw(); sk2Panel(); }));
   root.querySelectorAll('[data-sk2]').forEach(b=>b.addEventListener('click', ()=>sk2TopAction(b.dataset.sk2)));
   const tape = root.querySelector('#sk2-tape');
   let tTimer = null;
@@ -3309,7 +3322,7 @@ function sk2Draw(target){
     ctx.stroke();
   }
   const plan = S.plan, sel = target ? null : S.sel;
-  const M = target ? null : S.multi, inM = (k, id)=> !!(M && M[k] && M[k].includes(id));
+  const M = target ? null : S.multi, inM = (k, id)=> !!(M && M[k] && M[k].includes(id)), inSeg = (sid, seg)=> sk2HasSeg(M, sid, seg);
   const wallPx = Math.max(3, 4.5*view.s);
   const rooms = sk2SyncRooms(plan);
   // room fills (every area the walls close off)
@@ -3328,7 +3341,7 @@ function sk2Draw(target){
       const at = (t)=>W2S({x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t});
       let t = 0; const pieces = [];
       ops.forEach(x=>{ if(x.t0 > t) pieces.push([t, x.t0]); t = Math.max(t, x.t1); }); if(t < 1) pieces.push([t,1]);
-      const isSel = (sel && sel.kind==='wall' && sel.sid===sh.id && sel.seg===i) || inM('shapes', sh.id);
+      const isSel = (sel && sel.kind==='wall' && sel.sid===sh.id && sel.seg===i) || inSeg(sh.id, i);
       const isPick = S.picks.some(p=>p.sid===sh.id && p.seg===i) || (!target && S.dimStart && S.dimStart.sid===sh.id && S.dimStart.seg===i);
       ctx.lineCap = 'square'; ctx.lineWidth = wallPx; ctx.strokeStyle = isSel ? '#1F6FD1' : isPick ? '#D9822B' : '#2A261E';
       pieces.forEach(([u,v])=>{ const p = at(u), q = at(v); ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); });
@@ -3337,7 +3350,7 @@ function sk2Draw(target){
       let nrm = {x:-dir.y, y:dir.x};
       if(cen){ const mid = {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; if(sk2V.dot(sk2V.sub(cen, mid), nrm) < 0) nrm = {x:-nrm.x, y:-nrm.y}; }   // points into the room
       ops.forEach(({o, t0, t1})=>{
-        const p = at(t0), q = at(t1), osel = (sel && sel.kind==='opening' && sel.id===o.id) || inM('shapes', sh.id);
+        const p = at(t0), q = at(t1), osel = (sel && sel.kind==='opening' && sel.id===o.id) || inSeg(sh.id, i);
         ctx.strokeStyle = osel ? '#1F6FD1' : '#2A261E';
         if(o.type==='window'){
           const off = wallPx*0.35;
@@ -3473,7 +3486,8 @@ function sk2Status(){
   const tips = {
     draw: S.plan.shapes.length ? 'Draw more walls (one line at a time works too), or TAP a wall to measure it' : 'Draw a room with your finger — in one go or one wall at a time',
     select:'Tap a wall, room or item · drag items to move · drag the background to pan · pinch to zoom',
-    area: S.multi ? 'Drag inside the dashed box to move it all · tap outside to unselect · ⧉ Copy / 📋 Paste up top' : 'Drag a box around walls, rooms and items to select them all at once · use two fingers to pan/zoom',
+    area: S.multi ? 'Drag a box to add more · tap a wall to add/remove it · drag inside the dashed outline to move · tap empty space to unselect' : 'Drag a box across the walls you want — only the walls it crosses get picked · two fingers to pan/zoom',
+    multi: S.multi ? 'Tap walls, rooms or items to add/remove them · drag inside the dashed outline to move' : 'Tap walls one by one to pick them (tap a room to pick all its walls) · drag to pan',
     door:'Tap on a wall to add a door', window:'Tap on a wall to add a window', box:'Drag to draw a box any size — or tap for a standard one',
     column:'Tap on a wall to put a column inside it (or anywhere for a free-standing one)', note:'Tap where the note goes', pick:'Tap walls to add up their linear feet',
     dim: S.dimStart ? 'Now tap the OTHER wall' : 'Tap one wall, then the wall across from it — a measuring line goes between them',
@@ -3544,10 +3558,10 @@ function sk2Down(e){
     const hp = sk2BoxHandle(S.plan.boxes.find(x=>x.id===S.sel.id));
     if(hp && sk2V.dist(p, hp) <= 20){ S.drag = { resize:S.sel.id, pushed:false }; return; }
   }
-  if(S.tool==='area' && !S.readOnly){
+  if((S.tool==='area' || S.tool==='multi') && !S.readOnly){
     const w = sk2S2W(p);
     if(S.multi){ const bb = sk2SetBounds(S.plan, S.multi), pad = 16/S.view.s; if(bb && w.x>=bb.x0-pad && w.x<=bb.x1+pad && w.y>=bb.y0-pad && w.y<=bb.y1+pad){ S.drag = { multi:true, start:w, pushed:false }; return; } }
-    S.areaDraw = { a:w, b:w }; return;
+    if(S.tool==='area'){ S.areaDraw = { a:w, b:w }; return; }
   }
   if(S.tool==='draw' && !S.readOnly){ S.stroke = [sk2S2W(p)]; return; }
   if(S.tool==='box' && !S.readOnly){ const w0 = sk2S2W(p); S.boxDraw = { a:w0, b:w0 }; return; }
@@ -3631,12 +3645,12 @@ function sk2Up(e){
   }
   if(S.areaDraw){
     const ad = S.areaDraw; S.areaDraw = null;
-    if(tap){ const h = sk2Hit(p); S.multi = null; if(h) sk2Select(h); else { S.sel = null; sk2Draw(); sk2Panel(); } return; }
+    if(tap){ const h = sk2Hit(p); if(h) sk2ToggleHit(h); else sk2SetMulti(null); return; }
     sk2SelectRect(ad.a, ad.b);
-    if(!S.multi) sk2Toast('Nothing inside that box — drag around the walls or items');
+    if(!S.multi) sk2Toast('Nothing there — drag the box across the walls or items');
     return;
   }
-  if(S.drag && S.drag.multi){ S.drag = null; sk2Draw(); sk2Panel(); return; }
+  if(S.drag && S.drag.multi){ S.drag = null; if(tap){ sk2ToggleHit(sk2Hit(p)); return; } sk2Draw(); sk2Panel(); return; }
   if(S.stroke){
     const stroke = S.stroke; S.stroke = null;
     if(tap || stroke.length < 3){ sk2Select(sk2Hit(p)); return; }    // a tap while drawing selects (draw a room, then tap a wall to measure it)
@@ -3647,6 +3661,7 @@ function sk2Up(e){
   if(!tap) return;
   const w = sk2S2W(p);
   if(S.readOnly || S.tool==='select'){ sk2Select(sk2Hit(p)); return; }
+  if(S.tool==='multi'){ const h = sk2Hit(p); if(h) sk2ToggleHit(h); return; }
   if(S.tool==='dim'){
     const nw = sk2NearestWall(w, 26); if(!nw){ sk2Toast('Tap right on a wall'); return; }
     if(!S.dimStart){ S.dimStart = { sid:nw.sh.id, seg:nw.seg, t:nw.t }; sk2Draw(); sk2Status(); sk2Toast('Now tap the other wall'); return; }
@@ -3739,17 +3754,19 @@ function sk2AddStroke(stroke){
   }
   S.sel = null; sk2Draw(); sk2Panel();
 }
-/* ---- several things at once: drag a box to select, move them together, copy / paste ---- */
-const SK2_CLIP_KEY = 'gsb2-sk2-clip';
-function sk2EmptySet(){ return { shapes:[], boxes:[], columns:[], notes:[], dims:[], rooms:[] }; }
-function sk2SetCount(m){ return m ? m.shapes.length + m.boxes.length + m.columns.length + m.notes.length : 0; }
-/* add what belongs to the picked walls: their columns, measuring lines between them and the rooms they make */
+/* ---- several things at once: pick single wall pieces (drag a box or tap one by one), move them together, copy / paste, materials ---- */
+const SK2_CLIP_KEY = 'gsb2-sk2-clip', SK2_CALC_KEY = 'gsb2-sk2-calc';
+function sk2EmptySet(){ return { segs:[], boxes:[], columns:[], notes:[], dims:[], rooms:[] }; }
+function sk2SetCount(m){ return m ? m.segs.length + m.boxes.length + m.columns.length + m.notes.length : 0; }
+function sk2HasSeg(m, sid, seg){ return !!(m && m.segs.some(x=>x.sid===sid && x.seg===seg)); }
+function sk2AddSeg(m, sid, seg){ if(!sk2HasSeg(m, sid, seg)) m.segs.push({sid, seg}); }
+/* add what belongs to the picked wall pieces: their columns, measuring lines between them, and rooms closed off entirely by them */
 function sk2FinishSet(plan, m){
-  const sh = new Set(m.shapes);
-  plan.columns.forEach(c=>{ if(c.sid && sh.has(c.sid) && !m.columns.includes(c.id)) m.columns.push(c.id); });
-  m.columns = m.columns.filter(id=>{ const c = plan.columns.find(x=>x.id===id); return c && (!c.sid || sh.has(c.sid)); });
-  m.dims = (plan.dims||[]).filter(d=>sh.has(d.a.sid) && sh.has(d.b.sid)).map(d=>d.id);
-  m.rooms = sh.size ? sk2SyncRooms(plan).filter(r=>r._f && r._f.edges.length && r._f.edges.every(e=>sh.has(e.sid))).map(r=>r.id) : [];
+  m.segs = m.segs.filter(k=>{ const sh = plan.shapes.find(s=>s.id===k.sid); return sh && k.seg < sk2SegCount(sh); });
+  plan.columns.forEach(c=>{ if(c.sid && sk2HasSeg(m, c.sid, c.seg) && !m.columns.includes(c.id)) m.columns.push(c.id); });
+  m.columns = m.columns.filter(id=>{ const c = plan.columns.find(x=>x.id===id); return c && (!c.sid || sk2HasSeg(m, c.sid, c.seg)); });
+  m.dims = (plan.dims||[]).filter(d=>sk2HasSeg(m, d.a.sid, d.a.seg) && sk2HasSeg(m, d.b.sid, d.b.seg)).map(d=>d.id);
+  m.rooms = m.segs.length ? sk2SyncRooms(plan).filter(r=>r._f && r._f.edges.length && r._f.edges.every(e=>sk2HasSeg(m, e.sid, e.seg))).map(r=>r.id) : [];
   return m;
 }
 function sk2SegHitsRect(a, b, r){
@@ -3764,79 +3781,137 @@ function sk2SegHitsRect(a, b, r){
   }
   return true;
 }
+/* how much of the wall piece is inside the box (so grazing a corner doesn't pick the next wall) */
+function sk2SegInRect(a, b, r){
+  if(!sk2SegHitsRect(a, b, r)) return 0;
+  let n = 0; for(let i=0;i<=20;i++){ const t = i/20, x = a.x+(b.x-a.x)*t, y = a.y+(b.y-a.y)*t; if(x>=r.x0 && x<=r.x1 && y>=r.y0 && y<=r.y1) n++; }
+  return n/21;
+}
 function sk2SetMulti(m){
   const S = STATE.sk2;
   S.multi = (m && sk2SetCount(m)) ? m : null; S.sel = null;
-  if(S.multi) S.tool = 'area';
+  if(S.multi && S.tool!=='area' && S.tool!=='multi') S.tool = 'multi';
   sk2Draw(); sk2Panel();
 }
-/* everything the drag box touches */
+/* drag box: picks the wall pieces it crosses (not the whole room) plus items inside it; adds to what's already picked */
 function sk2SelectRect(a, b){
   const S = STATE.sk2, plan = S.plan, r = { x0:Math.min(a.x,b.x), y0:Math.min(a.y,b.y), x1:Math.max(a.x,b.x), y1:Math.max(a.y,b.y) };
   const inR = (p)=> p.x>=r.x0 && p.x<=r.x1 && p.y>=r.y0 && p.y<=r.y1;
-  const m = sk2EmptySet();
-  plan.shapes.forEach(sh=>{ for(let i=0;i<sk2SegCount(sh);i++){ const [p,q] = sk2SegEnds(sh,i); if(sk2SegHitsRect(p,q,r)){ m.shapes.push(sh.id); break; } } });
-  plan.boxes.forEach(bx=>{ const hw = Math.max(bx.w, bx.d)/2; if(bx.x+hw>=r.x0 && bx.x-hw<=r.x1 && bx.y+hw>=r.y0 && bx.y-hw<=r.y1 && (inR(bx) || sk2SegHitsRect({x:bx.x-bx.w/2,y:bx.y},{x:bx.x+bx.w/2,y:bx.y},r) || sk2SegHitsRect({x:bx.x,y:bx.y-bx.d/2},{x:bx.x,y:bx.y+bx.d/2},r))) m.boxes.push(bx.id); });
-  plan.columns.forEach(c=>{ if(!c.sid && inR(sk2ColPos(plan, c))) m.columns.push(c.id); });
-  plan.notes.forEach(n=>{ if(inR(n)) m.notes.push(n.id); });
+  const m = S.multi ? JSON.parse(JSON.stringify(S.multi)) : sk2EmptySet();
+  const tol = 10/S.view.s;
+  plan.shapes.forEach(sh=>{ for(let i=0;i<sk2SegCount(sh);i++){
+    const [p,q] = sk2SegEnds(sh,i), L = sk2V.dist(p,q);
+    // a wall counts when the box crosses it — touching only its very end (the corner of the next wall) doesn't
+    const shrink = Math.min(L*0.25, tol*2), u = L > 1e-6 ? sk2V.mul(sk2V.sub(q,p), 1/L) : {x:0,y:0};
+    const p2 = sk2V.add(p, sk2V.mul(u, shrink)), q2 = sk2V.sub(q, sk2V.mul(u, shrink));
+    if(sk2SegHitsRect(p2, q2, r)) sk2AddSeg(m, sh.id, i);
+  } });
+  plan.boxes.forEach(bx=>{ if(!m.boxes.includes(bx.id) && (inR(bx) || sk2SegHitsRect({x:bx.x-bx.w/2,y:bx.y},{x:bx.x+bx.w/2,y:bx.y},r) || sk2SegHitsRect({x:bx.x,y:bx.y-bx.d/2},{x:bx.x,y:bx.y+bx.d/2},r))) m.boxes.push(bx.id); });
+  plan.columns.forEach(c=>{ if(!c.sid && !m.columns.includes(c.id) && inR(sk2ColPos(plan, c))) m.columns.push(c.id); });
+  plan.notes.forEach(n=>{ if(!m.notes.includes(n.id) && inR(n)) m.notes.push(n.id); });
   sk2SetMulti(sk2FinishSet(plan, m));
+}
+/* tap: add / remove one thing (a room adds or removes all its walls) */
+function sk2ToggleHit(h){
+  const S = STATE.sk2, plan = S.plan; if(!h) return false;
+  const m = S.multi ? JSON.parse(JSON.stringify(S.multi)) : sk2EmptySet();
+  const togSegs = (list)=>{ const all = list.every(k=>sk2HasSeg(m, k.sid, k.seg)); if(all) m.segs = m.segs.filter(x=>!list.some(k=>k.sid===x.sid && k.seg===x.seg)); else list.forEach(k=>sk2AddSeg(m, k.sid, k.seg)); };
+  const togId = (arr, id)=>{ const i = arr.indexOf(id); if(i>=0) arr.splice(i,1); else arr.push(id); };
+  if(h.kind==='wall') togSegs([{sid:h.sid, seg:h.seg}]);
+  else if(h.kind==='room'){ const r = sk2SyncRooms(plan).find(x=>x.id===h.rid); if(r && r._f){ const seen = {}; togSegs(r._f.edges.filter(e=>{ const k = e.sid+':'+e.seg; if(seen[k]) return false; seen[k] = 1; return true; }).map(e=>({sid:e.sid, seg:e.seg}))); } }
+  else if(h.kind==='opening'){ const o = plan.openings.find(x=>x.id===h.id); if(o) togSegs([{sid:o.sid, seg:o.seg}]); }
+  else if(h.kind==='dim'){ const d = (plan.dims||[]).find(x=>x.id===h.id); if(d) togSegs([{sid:d.a.sid, seg:d.a.seg},{sid:d.b.sid, seg:d.b.seg}]); }
+  else if(h.kind==='column'){ const c = plan.columns.find(x=>x.id===h.id); if(c && c.sid) togSegs([{sid:c.sid, seg:c.seg}]); else togId(m.columns, h.id); }
+  else if(h.kind==='box') togId(m.boxes, h.id);
+  else if(h.kind==='note') togId(m.notes, h.id);
+  sk2SetMulti(sk2FinishSet(plan, m));
+  return true;
 }
 function sk2SelectAll(){
   const S = STATE.sk2, plan = S.plan; if(S.readOnly) return;
-  const m = { shapes:plan.shapes.map(x=>x.id), boxes:plan.boxes.map(x=>x.id), columns:plan.columns.filter(c=>!c.sid).map(x=>x.id), notes:plan.notes.map(x=>x.id), dims:[], rooms:[] };
+  const m = sk2EmptySet();
+  plan.shapes.forEach(sh=>{ for(let i=0;i<sk2SegCount(sh);i++) m.segs.push({sid:sh.id, seg:i}); });
+  m.boxes = plan.boxes.map(x=>x.id); m.columns = plan.columns.filter(c=>!c.sid).map(x=>x.id); m.notes = plan.notes.map(x=>x.id);
   if(!sk2SetCount(m)){ sk2Toast('Nothing on the sketch yet'); return; }
   sk2SetMulti(sk2FinishSet(plan, m));
 }
 function sk2SetBounds(plan, m){
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   const add = (p)=>{ x0 = Math.min(x0,p.x); y0 = Math.min(y0,p.y); x1 = Math.max(x1,p.x); y1 = Math.max(y1,p.y); };
-  plan.shapes.forEach(s=>{ if(m.shapes.includes(s.id)) s.pts.forEach(add); });
-  plan.boxes.forEach(b=>{ if(m.boxes.includes(b.id)){ const hw = Math.max(b.w, b.d)/2; add({x:b.x-hw, y:b.y-hw}); add({x:b.x+hw, y:b.y+hw}); } });
-  plan.columns.forEach(c=>{ if(m.columns.includes(c.id)) add(sk2ColPos(plan, c)); });
-  plan.notes.forEach(n=>{ if(m.notes.includes(n.id)) add(n); });
+  (m.segs||[]).forEach(k=>{ const sh = plan.shapes.find(s=>s.id===k.sid); if(sh && k.seg < sk2SegCount(sh)) sk2SegEnds(sh, k.seg).forEach(add); });
+  plan.boxes.forEach(b=>{ if((m.boxes||[]).includes(b.id)){ const hw = Math.max(b.w, b.d)/2; add({x:b.x-hw, y:b.y-hw}); add({x:b.x+hw, y:b.y+hw}); } });
+  plan.columns.forEach(c=>{ if((m.columns||[]).includes(c.id)) add(sk2ColPos(plan, c)); });
+  plan.notes.forEach(n=>{ if((m.notes||[]).includes(n.id)) add(n); });
   return x0===Infinity ? null : { x0, y0, x1, y1 };
 }
+/* moving: each picked wall piece moves; the walls next to it stretch to stay connected */
 function sk2MoveSet(plan, m, d){
-  plan.shapes.forEach(s=>{ if(m.shapes.includes(s.id)) s.pts = s.pts.map(p=>sk2V.add(p, d)); });
+  const done = new Set();
+  m.segs.forEach(k=>{ const sh = plan.shapes.find(s=>s.id===k.sid); if(!sh) return; [k.seg, (k.seg+1) % sh.pts.length].forEach(j=>{ const key = sh.id+':'+j; if(done.has(key)) return; done.add(key); sh.pts[j] = sk2V.add(sh.pts[j], d); }); });
   plan.boxes.forEach(b=>{ if(m.boxes.includes(b.id)){ b.x += d.x; b.y += d.y; } });
   plan.columns.forEach(c=>{ if(m.columns.includes(c.id) && !c.sid){ c.x += d.x; c.y += d.y; } });
   plan.notes.forEach(n=>{ if(m.notes.includes(n.id)){ n.x += d.x; n.y += d.y; } });
   (plan.rooms||[]).forEach(r=>{ if(m.rooms.includes(r.id)){ r.x += d.x; r.y += d.y; } });
 }
 function sk2DeleteSet(plan, m){
-  const sh = new Set(m.shapes);
-  plan.shapes = plan.shapes.filter(s=>!sh.has(s.id));
-  plan.openings = plan.openings.filter(o=>!sh.has(o.sid));
-  plan.columns = plan.columns.filter(c=>!m.columns.includes(c.id) && !(c.sid && sh.has(c.sid)));
+  // whole runs of walls go at once; single pieces are taken out one at a time (found again by position, since numbering shifts)
+  const pieces = [];
+  plan.shapes.slice().forEach(sh=>{
+    const n = sk2SegCount(sh), mine = m.segs.filter(k=>k.sid===sh.id);
+    if(!mine.length) return;
+    if(mine.length >= n){ plan.shapes = plan.shapes.filter(x=>x!==sh); plan.openings = plan.openings.filter(o=>o.sid!==sh.id); plan.columns = plan.columns.filter(c=>c.sid!==sh.id); plan.dims = (plan.dims||[]).filter(d=>d.a.sid!==sh.id && d.b.sid!==sh.id); return; }
+    mine.forEach(k=>{ const [a,b] = sk2SegEnds(sh, k.seg); pieces.push({a:{...a}, b:{...b}}); });
+  });
+  pieces.forEach(pc=>{
+    for(const sh of plan.shapes){ let hit = -1; for(let i=0;i<sk2SegCount(sh);i++){ const [a,b] = sk2SegEnds(sh,i); if((sk2V.dist(a,pc.a)<0.6 && sk2V.dist(b,pc.b)<0.6) || (sk2V.dist(a,pc.b)<0.6 && sk2V.dist(b,pc.a)<0.6)){ hit = i; break; } }
+      if(hit >= 0){ plan.columns = plan.columns.filter(c=>!(c.sid===sh.id && c.seg===hit)); sk2DeleteSeg(plan, sh, hit); break; } }
+  });
+  plan.columns = plan.columns.filter(c=>!m.columns.includes(c.id) || c.sid);
   plan.boxes = plan.boxes.filter(b=>!m.boxes.includes(b.id));
   plan.notes = plan.notes.filter(n=>!m.notes.includes(n.id));
-  plan.dims = (plan.dims||[]).filter(d=>!sh.has(d.a.sid) && !sh.has(d.b.sid));
   plan.rooms = (plan.rooms||[]).filter(r=>!m.rooms.includes(r.id));
 }
-/* what Copy takes: the drag-selection, or the one thing tapped (a room copies its walls, doors, windows and name) */
+/* what Copy takes: the selection, or the one thing tapped (a room copies its walls, doors, windows and name) */
 function sk2CurrentSet(){
   const S = STATE.sk2, plan = S.plan, sel = S.sel;
   if(S.multi) return S.multi;
   if(!sel) return null;
   const m = sk2EmptySet();
-  if(sel.kind==='wall') m.shapes.push(sel.sid);
-  else if(sel.kind==='room'){ const r = sk2SyncRooms(plan).find(x=>x.id===sel.rid); if(r && r._f) [...new Set(r._f.edges.map(e=>e.sid))].forEach(id=>m.shapes.push(id)); }
+  if(sel.kind==='wall') m.segs.push({sid:sel.sid, seg:sel.seg});
+  else if(sel.kind==='room'){ const r = sk2SyncRooms(plan).find(x=>x.id===sel.rid); if(r && r._f) r._f.edges.forEach(e=>sk2AddSeg(m, e.sid, e.seg)); }
   else if(sel.kind==='box') m.boxes.push(sel.id);
-  else if(sel.kind==='column'){ const c = plan.columns.find(x=>x.id===sel.id); if(c && c.sid) m.shapes.push(c.sid); else m.columns.push(sel.id); }
+  else if(sel.kind==='column'){ const c = plan.columns.find(x=>x.id===sel.id); if(c && c.sid) m.segs.push({sid:c.sid, seg:c.seg}); else m.columns.push(sel.id); }
   else if(sel.kind==='note') m.notes.push(sel.id);
-  else if(sel.kind==='opening'){ const o = plan.openings.find(x=>x.id===sel.id); if(o) m.shapes.push(o.sid); }
-  else if(sel.kind==='dim'){ const d = (plan.dims||[]).find(x=>x.id===sel.id); if(d){ m.shapes.push(d.a.sid); if(d.b.sid!==d.a.sid) m.shapes.push(d.b.sid); } }
+  else if(sel.kind==='opening'){ const o = plan.openings.find(x=>x.id===sel.id); if(o) m.segs.push({sid:o.sid, seg:o.seg}); }
+  else if(sel.kind==='dim'){ const d = (plan.dims||[]).find(x=>x.id===sel.id); if(d){ sk2AddSeg(m, d.a.sid, d.a.seg); sk2AddSeg(m, d.b.sid, d.b.seg); } }
   return sk2FinishSet(plan, m);
 }
 function sk2Copy(){
   const S = STATE.sk2; if(!S || S.readOnly) return;
   const plan = S.plan, m = sk2CurrentSet();
-  if(!m || !sk2SetCount(m)){ sk2Toast('Select something first — use ⬚ Select area to drag around things, or tap a room or item'); return; }
-  const sh = new Set(m.shapes), J = (x)=>JSON.parse(JSON.stringify(x));
-  const clip = { v:1,
-    shapes: J(plan.shapes.filter(s=>sh.has(s.id))), openings: J(plan.openings.filter(o=>sh.has(o.sid))),
-    columns: J(plan.columns.filter(c=>m.columns.includes(c.id))), boxes: J(plan.boxes.filter(b=>m.boxes.includes(b.id))),
-    notes: J(plan.notes.filter(n=>m.notes.includes(n.id))), dims: J((plan.dims||[]).filter(d=>m.dims.includes(d.id))),
+  if(!m || !sk2SetCount(m)){ sk2Toast('Select something first — ⬚ drag a box or ☑️ tap things, or tap a room'); return; }
+  const J = (x)=>JSON.parse(JSON.stringify(x)), map = {}, shapes = [];   // map "sid:seg" → [new shape id, new seg]
+  plan.shapes.forEach(sh=>{
+    const n = sk2SegCount(sh), on = (i)=> sk2HasSeg(m, sh.id, i);
+    const picked = []; for(let i=0;i<n;i++) if(on(i)) picked.push(i);
+    if(!picked.length) return;
+    if(picked.length===n){ const c = J(sh); c.id = sk2Uid(); shapes.push(c); for(let i=0;i<n;i++) map[sh.id+':'+i] = [c.id, i]; return; }
+    // runs of picked pieces that follow each other become their own wall lines
+    let starts = picked.filter(i=> sh.closed ? !on((i-1+n)%n) : (i===0 || !on(i-1)));
+    starts.forEach(st=>{
+      const run = []; let i = st; while(on(i) && run.length < n){ run.push(i); i = sh.closed ? (i+1)%n : i+1; if(!sh.closed && i>=n) break; }
+      const pts = [sh.pts[run[0]]].concat(run.map(k=>sh.pts[(k+1)%sh.pts.length])).map(p=>({x:p.x, y:p.y}));
+      const c = { id:sk2Uid(), pts, closed:false, name:'', meas:{} };
+      run.forEach((k,j)=>{ map[sh.id+':'+k] = [c.id, j]; if(sh.meas && sh.meas[k]!=null) c.meas[j] = sh.meas[k]; });
+      shapes.push(c);
+    });
+  });
+  const remap = (sid, seg)=> map[sid+':'+seg];
+  const clip = { v:2, shapes,
+    openings: plan.openings.filter(o=>remap(o.sid,o.seg)).map(o=>{ const x = J(o), r = remap(o.sid,o.seg); x.sid = r[0]; x.seg = r[1]; return x; }),
+    columns: plan.columns.filter(c=>m.columns.includes(c.id)).map(c=>{ const x = J(c); if(c.sid){ const r = remap(c.sid,c.seg); x.sid = r[0]; x.seg = r[1]; } return x; }),
+    boxes: J(plan.boxes.filter(b=>m.boxes.includes(b.id))), notes: J(plan.notes.filter(n=>m.notes.includes(n.id))),
+    dims: (plan.dims||[]).filter(d=>m.dims.includes(d.id)).map(d=>{ const x = J(d), ra = remap(d.a.sid,d.a.seg), rb = remap(d.b.sid,d.b.seg); x.a.sid = ra[0]; x.a.seg = ra[1]; x.b.sid = rb[0]; x.b.seg = rb[1]; return x; }),
     rooms: (plan.rooms||[]).filter(r=>m.rooms.includes(r.id)).map(r=>({ name:r.name, x:r.x, y:r.y })) };
   S.clip = clip; try{ localStorage.setItem(SK2_CLIP_KEY, JSON.stringify(clip)); }catch(e){}
   const n = sk2SetCount(m); sk2Toast('⧉ Copied '+n+' thing'+(n===1?'':'s')+' — tap 📋 Paste');
@@ -3846,17 +3921,17 @@ function sk2Paste(){
   let clip = S.clip; if(!clip){ try{ clip = JSON.parse(localStorage.getItem(SK2_CLIP_KEY)||'null'); }catch(e){} }
   if(!clip || !(clip.shapes.length + clip.boxes.length + clip.columns.length + clip.notes.length)){ sk2Toast('Nothing copied yet — select something and tap ⧉ Copy'); return; }
   const plan = S.plan, J = (x)=>JSON.parse(JSON.stringify(x)), ids = {}, nid = (old)=> ids[old] || (ids[old] = sk2Uid());
-  // where it goes: next to the original in the same sketch (each paste a bit further), or in the middle of the screen in another sketch
-  const tmp = { shapes:clip.shapes, boxes:clip.boxes, columns:clip.columns, notes:clip.notes };
-  const bb = sk2SetBounds(tmp, { shapes:clip.shapes.map(x=>x.id), boxes:clip.boxes.map(x=>x.id), columns:clip.columns.map(x=>x.id), notes:clip.notes.map(x=>x.id) }) || {x0:0,y0:0,x1:0,y1:0};
-  let d;
+  const tmpSegs = []; clip.shapes.forEach(sh=>{ for(let i=0;i<sk2SegCount(sh);i++) tmpSegs.push({sid:sh.id, seg:i}); });
+  const bb = sk2SetBounds({ shapes:clip.shapes, boxes:clip.boxes, columns:clip.columns, notes:clip.notes }, { segs:tmpSegs, boxes:clip.boxes.map(x=>x.id), columns:clip.columns.map(x=>x.id), notes:clip.notes.map(x=>x.id) }) || {x0:0,y0:0,x1:0,y1:0};
   // goes just to the right of everything already drawn, so it never lands on top of other walls; an empty sketch gets it in the middle of the screen
-  const all = sk2SetBounds(plan, { shapes:plan.shapes.map(x=>x.id), boxes:plan.boxes.map(x=>x.id), columns:plan.columns.map(x=>x.id), notes:plan.notes.map(x=>x.id) });
+  const allSegs = []; plan.shapes.forEach(sh=>{ for(let i=0;i<sk2SegCount(sh);i++) allSegs.push({sid:sh.id, seg:i}); });
+  const all = sk2SetBounds(plan, { segs:allSegs, boxes:plan.boxes.map(x=>x.id), columns:plan.columns.map(x=>x.id), notes:plan.notes.map(x=>x.id) });
+  let d;
   if(all) d = { x:all.x1 + 36 - bb.x0, y:all.y0 - bb.y0 };
   else { const cv = document.getElementById('sk2-canvas'); const c = sk2S2W({ x:(cv ? cv.clientWidth : 600)/2, y:(cv ? cv.clientHeight : 400)/2 }); d = { x:c.x - (bb.x0+bb.x1)/2, y:c.y - (bb.y0+bb.y1)/2 }; }
   sk2Push();
   const m = sk2EmptySet();
-  J(clip.shapes).forEach(s=>{ s.id = nid(s.id); s.pts = s.pts.map(p=>sk2V.add(p, d)); plan.shapes.push(s); m.shapes.push(s.id); });
+  J(clip.shapes).forEach(sh=>{ sh.id = nid(sh.id); sh.pts = sh.pts.map(p=>sk2V.add(p, d)); plan.shapes.push(sh); for(let i=0;i<sk2SegCount(sh);i++) m.segs.push({sid:sh.id, seg:i}); });
   J(clip.openings).forEach(o=>{ o.id = sk2Uid(); o.sid = nid(o.sid); plan.openings.push(o); });
   J(clip.columns).forEach(c=>{ c.id = sk2Uid(); if(c.sid) c.sid = nid(c.sid); else { c.x += d.x; c.y += d.y; } plan.columns.push(c); m.columns.push(c.id); });
   J(clip.boxes).forEach(b=>{ b.id = sk2Uid(); b.x += d.x; b.y += d.y; plan.boxes.push(b); m.boxes.push(b.id); });
@@ -3869,6 +3944,111 @@ function sk2Paste(){
   if(all) sk2Fit();
   sk2SetMulti(sk2FinishSet(plan, m));
   sk2Toast('📋 Pasted next to your drawing — drag it where you want it');
+}
+
+/* ---- materials from what's selected: drywall, studs and the rest (estimates — always round up / check before ordering) ---- */
+function sk2CalcSettings(){
+  const S = STATE.sk2;
+  if(!S.calc){ let c = {}; try{ c = JSON.parse(localStorage.getItem(SK2_CALC_KEY)||'{}'); }catch(e){}
+    S.calc = Object.assign({ h:96, sp:16, sides:2, sheet:'4x8', stud:'wood', waste:10, openings:true, ceil:false, floorWaste:10 }, c); }
+  return S.calc;
+}
+function sk2SaveCalc(){ try{ localStorage.setItem(SK2_CALC_KEY, JSON.stringify(STATE.sk2.calc)); }catch(e){} }
+function sk2Materials(plan, m, c){
+  const segs = m.segs.map(k=>{ const sh = plan.shapes.find(s=>s.id===k.sid); return (sh && k.seg < sk2SegCount(sh)) ? { sh, seg:k.seg, L:sk2SegLen(sh, k.seg) } : null; }).filter(Boolean);
+  const out = { walls:segs.length, lf:0, rows:[], rooms:[] };
+  const waste = 1 + (Math.max(0, +c.waste||0))/100, up = (x)=> Math.max(0, Math.ceil(x - 1e-9));
+  if(segs.length){
+    const L = segs.reduce((t,x)=>t + x.L, 0), H = c.h, sp = Math.max(4, +c.sp||16);
+    const ops = plan.openings.filter(o=>segs.some(x=>x.sh.id===o.sid && x.seg===o.seg));
+    const doors = ops.filter(o=>o.type!=='window'), wins = ops.filter(o=>o.type==='window');
+    const doorW = doors.reduce((t,o)=>t+o.w, 0);
+    const opArea = c.openings ? (doors.reduce((t,o)=>t + o.w*Math.min(80, H), 0) + wins.reduce((t,o)=>t + o.w*Math.min(48, H), 0)) : 0;   // doors 6'8", windows 4' tall
+    const oneSide = Math.max(0, (L*H - opArea)/144), dwArea = oneSide * c.sides;
+    out.lf = L/12;
+    const metal = c.stud==='metal';
+    // studs: one every "spacing" plus the end one on each wall, 2 more around each door / window
+    let studs = 0; segs.forEach(x=>{ studs += Math.ceil(x.L/sp - 1e-9) + 1; });
+    studs += ops.length*2;
+    const studsTot = up(studs*waste);
+    const studLen = H <= 96 ? (metal ? "8'" : "8' (92 5/8\" precut)") : sk2Fmt(Math.ceil(H/12)*12);
+    out.rows.push({ g:'Framing', label:(metal ? 'Metal studs' : '2x4 studs')+' — '+sp+'" apart', qty:studsTot, unit:'studs', note:studLen+' long · '+studs+' + '+(c.waste||0)+'% extra'+(ops.length ? ' · includes 2 extra at each of the '+ops.length+' door/window'+(ops.length===1?'':'s') : '') });
+    const runs = metal ? 2 : 3, stick = metal ? 10 : 8;
+    const plateLF = (L*runs - doorW)/12;
+    out.rows.push({ g:'Framing', label: metal ? 'Track (top + bottom), 10\' pieces' : 'Plates (bottom + double top), 8\' boards', qty:up(plateLF*waste/stick), unit:'pcs', note:plateLF.toFixed(1)+' LF' });
+    out.rows.push({ g:'Framing', label: metal ? 'Framing screws (#8 pan head)' : 'Framing nails (16d)', qty:up(studsTot*4 + (metal ? 0 : plateLF*0.75)), unit:'pcs', note: metal ? '4 per stud' : '4 per stud + top plates every 16"' });
+    out.rows.push({ g:'Framing', label:'Slab anchors / shot pins (bottom '+(metal?'track':'plate')+')', qty:up((L - doorW)/24 + segs.length), unit:'pcs', note:'1 every 24" + 1 at each end' });
+    const sheetA = { '4x8':32, '4x10':40, '4x12':48 }[c.sheet] || 32;
+    const sheets = up(dwArea*waste/sheetA);
+    out.rows.push({ g:'Drywall', label:'Drywall sheets '+c.sheet.replace('x',"'×")+"'", qty:sheets, unit:'sheets', note:dwArea.toFixed(0)+' sq ft ('+c.sides+' side'+(c.sides==1?'':'s')+(c.openings && ops.length ? ', doors/windows taken out' : '')+') + '+(c.waste||0)+'%' });
+    out.rows.push({ g:'Drywall', label:'Drywall screws 1-1/4"', qty:up(dwArea*waste*(16/sp)), unit:'pcs', note:'about '+Math.max(1, up(dwArea*waste*(16/sp)/300))+' lb' });
+    out.rows.push({ g:'Drywall', label:'Joint compound (4.5 gal box/bucket)', qty:up(dwArea/450), unit:'buckets', note:'about 1 per 450 sq ft' });
+    out.rows.push({ g:'Drywall', label:'Joint tape (500\' roll)', qty:up(dwArea*0.37/500), unit:'rolls', note:(dwArea*0.37).toFixed(0)+' LF' });
+    out.rows.push({ g:'Finish', label:'Insulation (wall cavities)', qty:up(oneSide), unit:'sq ft', note:'one side of the walls' });
+    out.rows.push({ g:'Finish', label:'Primer (1 coat)', qty:up(dwArea/300), unit:'gal', note:'about 300 sq ft per gallon' });
+    out.rows.push({ g:'Finish', label:'Paint (2 coats)', qty:up(dwArea*2/350), unit:'gal', note:'about 350 sq ft per gallon' });
+    out.rows.push({ g:'Finish', label:'Baseboard', qty:up((L - doorW)*c.sides*waste/12), unit:'LF', note:'doors taken out · '+c.sides+' side'+(c.sides==1?'':'s') });
+    out.ops = ops.length;
+  }
+  const rooms = sk2SyncRooms(plan).filter(r=>m.rooms.includes(r.id));
+  if(rooms.length){
+    const fw = 1 + (Math.max(0, +c.floorWaste||0))/100;
+    const area = rooms.reduce((t,r)=>t + r._f.net/144, 0);
+    out.rooms = rooms.map(r=>r.name);
+    out.rows.push({ g:'Rooms', label:'Floor area', qty:+area.toFixed(1), unit:'sq ft', note:rooms.map(r=>r.name+' '+(r._f.net/144).toFixed(1)).join(' · ') });
+    out.rows.push({ g:'Rooms', label:'Flooring / tile to order', qty:up(area*fw), unit:'sq ft', note:'+'+(c.floorWaste||0)+'% for cuts' });
+    out.rows.push({ g:'Rooms', label:'Thinset / tile adhesive (50 lb bag)', qty:up(area/90), unit:'bags', note:'about 90 sq ft per bag (1/4" trowel)' });
+    out.rows.push({ g:'Rooms', label:'Grout (25 lb bag)', qty:up(area/200), unit:'bags', note:'rough — depends on tile size and joint' });
+    if(c.ceil){ const sheetA = { '4x8':32, '4x10':40, '4x12':48 }[c.sheet] || 32; out.rows.push({ g:'Rooms', label:'Ceiling drywall '+c.sheet.replace('x',"'×")+"'", qty:up(area*waste/sheetA), unit:'sheets', note:area.toFixed(0)+' sq ft + '+(c.waste||0)+'%' }); }
+  }
+  return out;
+}
+function sk2Unit(x){ return (x.qty===1 && /s$/.test(x.unit) && x.unit!=='pcs') ? x.unit.slice(0,-1) : x.unit; }
+function sk2CalcHTML(plan, m){
+  const c = sk2CalcSettings(), r = sk2Materials(plan, m, c);
+  if(!r.rows.length) return `<div class="sk2-calc"><h4>🧮 Materials</h4><p class="sub">Select walls or rooms to see drywall, studs and the rest.</p></div>`;
+  const opt = (v, cur, label)=>`<option value="${v}" ${String(v)===String(cur)?'selected':''}>${label}</option>`;
+  let g = '', rows = '';
+  r.rows.forEach(x=>{ if(x.g!==g){ g = x.g; rows += `<tr><td colspan="2" class="g">${esc(g)}</td></tr>`; } rows += `<tr><td>${esc(x.label)}<div class="n">${esc(x.note||'')}</div></td><td class="q">${x.qty.toLocaleString()} <span>${esc(sk2Unit(x))}</span></td></tr>`; });
+  return `<div class="sk2-calc">
+    <h4>🧮 Materials</h4>
+    <p class="sub">${r.walls ? `${r.walls} wall${r.walls===1?'':'s'} · <b>${r.lf.toFixed(1)} LF</b>${r.ops ? ' · '+r.ops+' door/window'+(r.ops===1?'':'s') : ''}` : ''}${r.rooms.length ? (r.walls?'<br>':'')+'Rooms: '+esc(r.rooms.join(', ')) : ''}</p>
+    ${r.walls ? `<div class="sk2-cgrid">
+      <label>Wall height<input id="sk2c-h" value="${esc(sk2Fmt(c.h))}" autocomplete="off"></label>
+      <label>Stud spacing (inches)<input id="sk2c-sp" type="number" inputmode="decimal" min="4" step="any" value="${c.sp}"></label>
+      <label>Studs<select id="sk2c-stud">${opt('wood',c.stud,'Wood 2x4')}${opt('metal',c.stud,'Metal studs')}</select></label>
+      <label>Drywall sheets<select id="sk2c-sheet">${opt('4x8',c.sheet,"4' × 8'")}${opt('4x10',c.sheet,"4' × 10'")}${opt('4x12',c.sheet,"4' × 12'")}</select></label>
+      <label>Drywall on<select id="sk2c-sides">${opt(1,c.sides,'1 side')}${opt(2,c.sides,'Both sides')}</select></label>
+      <label>Extra for waste %<input id="sk2c-waste" type="number" inputmode="decimal" min="0" step="1" value="${c.waste}"></label>
+    </div>
+    <label class="sk2-cchk"><input type="checkbox" id="sk2c-ops" ${c.openings?'checked':''}> Take doors &amp; windows out of the drywall</label>` : ''}
+    ${r.rooms.length ? `<div class="sk2-cgrid">
+      <label>Flooring waste %<input id="sk2c-fw" type="number" inputmode="decimal" min="0" step="1" value="${c.floorWaste}"></label>
+      <label class="sk2-cchk" style="align-self:end;"><input type="checkbox" id="sk2c-ceil" ${c.ceil?'checked':''}> Ceiling drywall too</label>
+    </div>` : ''}
+    <table class="sk2-ctab">${rows}</table>
+    <div class="sk2-row"><button class="sk2-b" data-sk2p="calccopy">📄 Copy this list (to paste in an estimate)</button></div>
+    <p class="sub" style="font-size:11.5px;">These are quick estimates rounded up — double-check before ordering.</p>
+  </div>`;
+}
+function sk2CalcText(plan, m){
+  const c = sk2CalcSettings(), r = sk2Materials(plan, m, c);
+  let g = '', t = 'MATERIALS — '+(r.walls ? r.walls+' walls, '+r.lf.toFixed(1)+' LF, '+sk2Fmt(c.h)+' high, studs '+c.sp+'" apart' : '')+(r.rooms.length ? (r.walls?' · ':'')+'rooms: '+r.rooms.join(', ') : '')+'\n';
+  r.rows.forEach(x=>{ if(x.g!==g){ g = x.g; t += '\n'+g.toUpperCase()+'\n'; } t += '- '+x.label+': '+x.qty.toLocaleString()+' '+sk2Unit(x)+(x.note ? '  ('+x.note+')' : '')+'\n'; });
+  return t;
+}
+function sk2BindCalc(){
+  const S = STATE.sk2, c = sk2CalcSettings();
+  const on = (id, fn)=>{ const el = document.getElementById(id); if(el) el.addEventListener('change', ()=>{ fn(el); sk2SaveCalc(); sk2Panel(); }); };
+  on('sk2c-h', (el)=>{ const v = sk2ParseLen(el.value); if(v && v > 12) c.h = v; else sk2Toast('Type a wall height like 8\' or 9\' 6"'); });
+  on('sk2c-sp', (el)=>{ const v = parseFloat(String(el.value).replace(/[^0-9.]/g,'')); if(v >= 4) c.sp = v; else sk2Toast('Stud spacing has to be at least 4"'); });
+  on('sk2c-stud', (el)=>{ c.stud = el.value; });
+  on('sk2c-sheet', (el)=>{ c.sheet = el.value; });
+  on('sk2c-sides', (el)=>{ c.sides = +el.value; });
+  on('sk2c-waste', (el)=>{ const v = parseFloat(el.value); c.waste = isFinite(v) && v >= 0 ? v : 0; });
+  on('sk2c-fw', (el)=>{ const v = parseFloat(el.value); c.floorWaste = isFinite(v) && v >= 0 ? v : 0; });
+  on('sk2c-ops', (el)=>{ c.openings = el.checked; });
+  on('sk2c-ceil', (el)=>{ c.ceil = el.checked; });
 }
 function sk2Push(){ const S = STATE.sk2; S.undo.push(JSON.stringify(S.plan)); if(S.undo.length > 60) S.undo.shift(); }
 function sk2Select(h){
@@ -3964,11 +4144,12 @@ function sk2Panel(){
   let h = '';
   if(S.multi && !ro){
     const m = S.multi, n = sk2SetCount(m), pl = (k, one, many)=> k ? k+' '+(k===1?one:many) : '';
-    const parts = [pl(m.rooms.length,'room','rooms'), pl(m.shapes.length,'wall line','wall lines'), pl(m.boxes.length,'box','boxes'), pl(m.columns.length,'column','columns'), pl(m.notes.length,'note','notes')].filter(Boolean).join(' · ');
-    h = `<h3>⬚ ${n} selected</h3><p class="sub">${parts}<br>Drag inside the dashed box to move them all together.</p>
+    const parts = [pl(m.segs.length,'wall','walls'), pl(m.rooms.length,'whole room','whole rooms'), pl(m.boxes.length,'box','boxes'), pl(m.columns.length,'column','columns'), pl(m.notes.length,'note','notes')].filter(Boolean).join(' · ');
+    h = `<h3>${S.tool==='multi'?'☑️':'⬚'} ${n} selected</h3><p class="sub">${parts}<br>Tap a wall or item to add or remove it. Drag inside the dashed outline to move them together.</p>
       <div class="sk2-row"><button class="sk2-b main" data-sk2p="mcopy">⧉ Copy</button><button class="sk2-b" data-sk2p="mpaste">📋 Paste</button></div>
       <div class="sk2-row"><button class="sk2-b" data-sk2p="mall">Select everything</button><button class="sk2-b" data-sk2p="mnone">Unselect</button></div>
-      <div class="sk2-row"><button class="sk2-b warn" data-sk2p="mdel">🗑 Delete selected</button></div>`;
+      <div class="sk2-row"><button class="sk2-b warn" data-sk2p="mdel">🗑 Delete selected</button></div>
+      ${sk2CalcHTML(plan, m)}`;
   } else if(S.tool==='pick' && !ro){
     let tot = 0; S.picks.forEach(p=>{ const sh = plan.shapes.find(x=>x.id===p.sid); if(sh) tot += sk2SegLen(sh, p.seg) - sk2DoorWidthOn(plan, sh, p.seg); });
     h = `<h3>📐 Add up linear feet</h3><p class="sub">Tap walls on the sketch to add or remove them. Door openings are taken out.</p>
@@ -4031,8 +4212,11 @@ function sk2Panel(){
     const nt = plan.notes.find(x=>x.id===sel.id); if(!nt){ S.sel = null; return sk2Panel(); }
     h = `<h3>📝 Note</h3>${ro ? `<p>${esc(nt.text)}</p>` : `<div class="sk2-field"><textarea id="sk2-notetext" rows="3">${esc(nt.text)}</textarea></div>
       <div class="sk2-row"><button class="sk2-b main" data-sk2p="savenote">Save note</button><button class="sk2-b warn" data-sk2p="delitem">Delete</button></div>`}`;
-  } else if(S.tool==='area' && !ro){
-    h = `<h3>⬚ Select area</h3><p class="sub">Drag a box around walls, rooms and items to select them all in one go. Then drag them to move them together, or Copy, Paste or Delete them.<br><br>Tip: tapping one room or item also works with ⧉ Copy.</p>
+  } else if((S.tool==='area' || S.tool==='multi') && !ro){
+    h = S.tool==='area'
+      ? `<h3>⬚ Drag select</h3><p class="sub">Drag a box across the walls you want — only the walls the box crosses get picked, not the whole room. Drag again to add more; tap a wall to add or remove it.<br><br>Then move them together, Copy / Paste / Delete them, and see the 🧮 materials (drywall, studs…).</p>`
+      : `<h3>☑️ Multi-select</h3><p class="sub">Tap walls one by one to pick them (tap again to remove). Tap inside a room to pick all its walls.<br><br>Then move them together, Copy / Paste / Delete them, and see the 🧮 materials (drywall, studs…).</p>`;
+    h += `
       <div class="sk2-row"><button class="sk2-b main" data-sk2p="mall">Select everything</button><button class="sk2-b" data-sk2p="mpaste">📋 Paste</button></div>`;
   } else {
     const t = sk2Totals(plan);
@@ -4040,7 +4224,9 @@ function sk2Panel(){
       ${t.rooms.length ? `<div class="sk2-list">${t.rooms.map(r=>`<div data-sk2p="openroom" data-rid="${r.id}"><span><b>${esc(r.name)}</b>${r.measured<r.walls?' <span style="color:#B8863A">(~)</span>':''}</span><span>${r.sqft.toFixed(1)} sq ft · ${r.lf.toFixed(1)} LF</span></div>`).join('')}</div>` : ''}
       ${ro ? '' : `<p class="sub" style="margin-top:12px;"><b>How it works</b><br>1. ✏️ Draw a room with your finger — rough is fine. Leave a gap where the door is.<br>2. Tap a wall, then measure it with the tape (or type it). The wall snaps to the size and the room adjusts. The next wall is picked for you.<br>3. Add 🚪 doors, 🪟 windows, ⬛ cabinets/appliances, ⬤ columns and 📝 notes.<br>4. Pinch to zoom, drag with 👆 Select to pan. Tap <b>Save</b> when done.</p>`}`;
   }
+  if(!ro && !S.multi && sel && (sel.kind==='wall' || sel.kind==='room')) h += `<div class="sk2-row" style="margin-top:12px;"><button class="sk2-b" data-sk2p="calcsel">🧮 Materials for this ${sel.kind==='wall'?'wall':'room'} (drywall, studs…)</button></div>`;
   el.innerHTML = h;
+  if(S.multi && !ro) sk2BindCalc();
   // wire the panel
   el.querySelectorAll('[data-sk2p]').forEach(b=>b.addEventListener('click', ()=>sk2PanelAction(b.dataset.sk2p, b)));
   ['sk2-len','sk2-boxw','sk2-boxd'].forEach(id=>{ const i = document.getElementById(id); if(i) i.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); sk2PanelAction(id==='sk2-len'?'setlen':'boxsize', {dataset:{input:id}}); } }); });
@@ -4052,6 +4238,9 @@ function sk2Panel(){
 function sk2PanelAction(a, btn){
   const S = STATE.sk2, plan = S.plan, sel = S.sel;
   if(a==='mcopy'){ sk2Copy(); return; }
+  if(a==='calcsel'){ const m = sk2CurrentSet(); S.tool = 'multi'; sk2SetMulti(m); return; }
+  if(a==='calccopy'){ const t = sk2CalcText(plan, S.multi||sk2EmptySet()); const done = ()=>sk2Toast('📄 Materials list copied — paste it into the estimate or a note');
+    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, ()=>{ prompt('Copy this list:', t); }); else prompt('Copy this list:', t); return; }
   if(a==='mpaste'){ sk2Paste(); return; }
   if(a==='mall'){ sk2SelectAll(); return; }
   if(a==='mnone'){ sk2SetMulti(null); return; }
@@ -10337,6 +10526,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-k</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-l</div>
 </body>
 </html>
