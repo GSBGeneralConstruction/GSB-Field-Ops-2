@@ -279,7 +279,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.12-d';
+const APP_VERSION = 'v2.0-2026.11.12-e';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -1359,38 +1359,183 @@ function publicCopyHTML(title){
     <style>body{background:#fff;margin:0;} .login-wrap{min-height:0;background:#fff;align-items:flex-start;} .login-card{box-shadow:none;max-width:760px;}</style></head>
     <body><div class="login-wrap">${copy.outerHTML}</div></body></html>`;
 }
+/* Real PDF of the signed page (text, not a screenshot) — made on the client's own device.
+   On iPhone/iPad the share menu that opens has "Print", which works even inside Gmail/Outlook's built-in browser. */
+const JSPDF_URLS = ['https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js', 'https://unpkg.com/jspdf@2.5.2/dist/jspdf.umd.min.js'];
+let _jspdfPromise = null;
+function loadJsPdf(){
+  if(window.jspdf && window.jspdf.jsPDF) return Promise.resolve(window.jspdf.jsPDF);
+  if(_jspdfPromise) return _jspdfPromise;
+  _jspdfPromise = new Promise((resolve, reject)=>{
+    let i = 0;
+    const next = ()=>{
+      if(i >= JSPDF_URLS.length){ _jspdfPromise = null; reject(new Error('PDF tool did not load')); return; }
+      const sc = document.createElement('script'); sc.src = JSPDF_URLS[i++]; sc.async = true;
+      sc.onload = ()=> (window.jspdf && window.jspdf.jsPDF) ? resolve(window.jspdf.jsPDF) : next();
+      sc.onerror = next;
+      document.head.appendChild(sc);
+    };
+    next();
+  });
+  return _jspdfPromise;
+}
+function isAppleTouch(){ return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1); }
+function pdfCleanText(t){
+  return String(t||'').replace(/ /g,' ').replace(/[✓✔]/g,'').replace(/×/g,'x')
+    .replace(/[^\x09\x0a\x0d\x20-\x7e -ÿ–—‘’“”•…€]/g,'').replace(/[ \t]+\n/g,'\n').trim();
+}
+function buildPdfFromCard(card, title){
+  const JsPDF = window.jspdf && window.jspdf.jsPDF; if(!JsPDF || !card) return null;
+  const doc = new JsPDF({unit:'pt', format:'letter', compress:true});
+  const PW = doc.internal.pageSize.getWidth(), PH = doc.internal.pageSize.getHeight(), M = 50, W = PW - 2*M, BOTTOM = PH - 50;
+  let y = M;
+  const ensure = (h)=>{ if(y + h > BOTTOM){ doc.addPage(); y = M; } };
+  const px2pt = (px)=> Math.max(8, Math.min(16, (parseFloat(px)||13) * 0.75));
+  const rgb = (c)=>{ const m = String(c).match(/\d+/g); return m ? [ +m[0], +m[1], +m[2] ] : [42,38,30]; };
+  const SKIP = /^(BUTTON|INPUT|TEXTAREA|SELECT|CANVAS|SCRIPT|STYLE|SVG|LABEL)$/;
+  const hidden = (el)=> el.closest('[data-no-copy]') || getComputedStyle(el).display==='none';
+  const inlineOnly = (el)=> Array.prototype.every.call(el.childNodes, n=> n.nodeType===3 || (n.nodeType===1 && n.tagName!=='IMG' && /^inline/.test(getComputedStyle(n).display) && inlineOnly(n)));
+  function text(str, o){
+    o = o || {}; str = pdfCleanText(str); if(!str) return;
+    const size = o.size || 10; doc.setFont('helvetica', o.bold ? 'bold' : 'normal'); doc.setFontSize(size);
+    const c = o.color || [42,38,30]; doc.setTextColor(c[0], c[1], c[2]);
+    const indent = o.indent || 0, lh = size * 1.32;
+    if(o.before) { y += o.before; }
+    const lines = doc.splitTextToSize(str, W - indent - (o.prefix ? 14 : 0));
+    lines.forEach((ln, i)=>{
+      ensure(lh);
+      if(o.prefix && i===0) doc.text(o.prefix, M + indent, y + size);
+      const x = M + indent + (o.prefix ? 14 : 0);
+      if(o.align==='center') doc.text(ln, PW/2, y + size, {align:'center'});
+      else if(o.align==='right') doc.text(ln, PW - M, y + size, {align:'right'});
+      else doc.text(ln, x, y + size);
+      y += lh;
+    });
+    if(o.rule){ doc.setDrawColor(200,195,185); doc.setLineWidth(0.6); doc.line(M, y + 1, PW - M, y + 1); y += 4; }
+    y += (o.after != null ? o.after : 2);
+  }
+  function styleOf(el){
+    const cs = getComputedStyle(el);
+    const heading = /^H[1-4]$/.test(el.tagName) || el.classList.contains('section-label') || el.classList.contains('est-h');
+    return { size: px2pt(cs.fontSize), bold: parseInt(cs.fontWeight,10) >= 600 || heading, color: rgb(cs.color),
+      align: (cs.textAlign==='center' ? 'center' : cs.textAlign==='right' ? 'right' : 'left'), upper: cs.textTransform==='uppercase',
+      rule: heading && cs.borderBottomStyle!=='none' && parseFloat(cs.borderBottomWidth)>0, before: heading ? 8 : 0 };
+  }
+  function image(el){
+    const src = el.getAttribute('src')||''; if(!/^data:image\/(png|jpe?g)/i.test(src)) return;
+    const logo = el.classList.contains('login-logo');
+    const nw = el.naturalWidth || 300, nh = el.naturalHeight || 100;
+    const h = logo ? 46 : 48, w = Math.min(W, h * nw / nh);
+    ensure(h + 6);
+    try{ doc.addImage(src, /png/i.test(src) ? 'PNG' : 'JPEG', logo ? (PW - w)/2 : M, y, w, h, undefined, 'FAST'); y += h + 6; }catch(e){}
+  }
+  function table(el){
+    Array.prototype.forEach.call(el.querySelectorAll('tr'), tr=>{
+      const cells = tr.querySelectorAll('td,th'); if(!cells.length) return;
+      const bold = !!tr.querySelector('b,strong') || tr.classList.contains('est-total');
+      const left = pdfCleanText(cells[0].innerText), right = cells.length>1 ? pdfCleanText(cells[cells.length-1].innerText) : '';
+      doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(10); doc.setTextColor(42,38,30);
+      const lines = doc.splitTextToSize(left, W - 110); const h = lines.length * 13.2 + 6;
+      ensure(h);
+      lines.forEach((ln,i)=> doc.text(ln, M, y + 10 + i*13.2));
+      if(right) doc.text(right, PW - M, y + 10, {align:'right'});
+      y += h; doc.setDrawColor(221,221,221); doc.setLineWidth(0.5); doc.line(M, y - 3, PW - M, y - 3);
+    });
+    y += 4;
+  }
+  function list(el, depth){
+    let n = 0;
+    Array.prototype.forEach.call(el.children, li=>{
+      if(li.tagName!=='LI' || hidden(li)) return; n++;
+      text(li.innerText, {size:10, indent:10 + depth*12, prefix: el.tagName==='OL' ? n+'.' : '•', after:1});
+    });
+    y += 3;
+  }
+  function walk(el){
+    if(el.nodeType!==1 || SKIP.test(el.tagName) || hidden(el)) return;
+    if(el.tagName==='IMG') return image(el);
+    if(el.tagName==='TABLE') return table(el);
+    if(el.tagName==='UL' || el.tagName==='OL') return list(el, 0);
+    if(el.tagName==='HR'){ y += 6; return; }
+    const kids = Array.prototype.filter.call(el.children, k=>!hidden(k));
+    if(kids.length===2 && (kids[0].classList.contains('k') || kids[0].classList.contains('est-k'))){
+      const k = pdfCleanText(kids[0].innerText), v = pdfCleanText(kids[1].innerText);
+      text(k.charAt(0).toUpperCase()+k.slice(1).toLowerCase()+': '+v, {size:10, after:1}); return;
+    }
+    if(inlineOnly(el)){
+      const st = styleOf(el); let t = el.innerText; if(st.upper) t = t.toUpperCase();
+      text(t, {size:st.size, bold:st.bold, color:st.color, align:st.align, rule:st.rule, before:st.before, after: st.bold ? 3 : 4});
+      return;
+    }
+    Array.prototype.forEach.call(el.childNodes, n=>{
+      if(n.nodeType===3){ if(n.textContent.trim()) text(n.textContent, {size:10}); }
+      else walk(n);
+    });
+  }
+  walk(card);
+  const pages = doc.internal.getNumberOfPages();
+  for(let i=1;i<=pages;i++){
+    doc.setPage(i); doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(140,140,140);
+    doc.text('GSB General Construction Inc  •  Florida License #CGC1539336  •  954-605-4746  •  Page '+i+' of '+pages, PW/2, PH - 26, {align:'center'});
+  }
+  doc.setProperties({title: title});
+  return doc.output('blob');
+}
 function bindPublicCopyButtons(title, fileBase){
   const help = (msg)=>{ const h = document.getElementById('public-print-help'); if(h){ h.innerHTML = msg; h.style.display = 'block'; } };
-  document.querySelectorAll('[data-action="public-print"]').forEach(el=>el.addEventListener('click', ()=>{
-    let opened = false;
-    const mark = ()=>{ opened = true; };
+  const base = String(fileBase||'GSB document').replace(/[\\/:*?"<>|]+/g,'').trim();
+  loadJsPdf().catch(()=>{});   // get the PDF tool ready now, so tapping a button opens the menu right away
+  const pdfFile = ()=>{
+    try{ const blob = buildPdfFromCard(document.querySelector('.login-card'), title); return blob ? new File([blob], base+'.pdf', {type:'application/pdf'}) : null; }
+    catch(e){ console.warn('pdf', e); return null; }
+  };
+  const canShareFile = (f)=>{ try{ return !!(f && navigator.canShare && navigator.canShare({files:[f]})); }catch(e){ return false; } };
+  const saveFile = (f)=>{
+    const url = URL.createObjectURL(f);
+    const a = document.createElement('a'); a.href = url; a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 60000);
+  };
+  // Print
+  document.querySelectorAll('[data-action="public-print"]').forEach(el=>el.addEventListener('click', async ()=>{
+    if(isAppleTouch()){
+      // iPhone/iPad: Safari, Gmail, Outlook and app browsers handle "print" differently — the share menu always has Print.
+      if(!(window.jspdf && window.jspdf.jsPDF)){
+        help('Getting your copy ready…');
+        try{ await loadJsPdf(); }catch(e){ help('Could not prepare the printable copy (no internet?). Please try again in a moment, or tap <b>⬇ Download a Copy</b>.'); return; }
+      }
+      const f = pdfFile();
+      if(f && canShareFile(f)){
+        help('In the menu that opens, tap <b>Print</b>. (Scroll the menu down if you don\'t see it.)');
+        try{ await navigator.share({files:[f], title}); return; }
+        catch(e){ if(e && e.name==='AbortError') return; help('Your printable copy is ready — tap <b>🖨 Print</b> once more, then choose <b>Print</b> in the menu.'); return; }
+      }
+      try{ window.print(); }catch(e){}
+      return;
+    }
+    // Computers and Android: the normal print window
+    let opened = false; const mark = ()=>{ opened = true; };
     window.addEventListener('beforeprint', mark);
     try{ window.print(); }catch(e){}
     setTimeout(()=>{
       window.removeEventListener('beforeprint', mark);
-      if(!opened) help('<b>Printing isn\'t available in this app\'s built-in browser.</b><br>Tap <b>⬇ Download a Copy</b> to save it, or open this page in Safari or Chrome (tap the <b>•••</b> or share button → <b>Open in Browser</b>) and tap Print again.');
+      if(opened) return;
+      help('<b>Printing isn\'t available in this browser.</b> Tap <b>⬇ Download a Copy</b> to get a PDF you can print, or open this page in Chrome or Safari and tap Print again.');
     }, 1500);
   }));
+  // Download
   document.querySelectorAll('[data-action="public-download"]').forEach(el=>el.addEventListener('click', async ()=>{
-    const html = publicCopyHTML(title);
-    if(!html){ help('Could not make a copy. Please call GSB General Construction at 954-605-4746 and we will email you one.'); return; }
-    const name = String(fileBase||'GSB document').replace(/[\\/:*?"<>|]+/g,'').trim() + '.html';
-    const blob = new Blob([html], {type:'text/html'});
-    const touch = (navigator.maxTouchPoints||0) > 0;
-    try{
-      if(touch && typeof File!=='undefined' && navigator.canShare){
-        const file = new File([blob], name, {type:'text/html'});
-        if(navigator.canShare({files:[file]})){ await navigator.share({files:[file], title}); return; }
-      }
-    }catch(e){ if(e && e.name==='AbortError') return; }
-    try{
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(()=>URL.revokeObjectURL(url), 60000);
-      help('✓ Your copy was downloaded (<b>'+esc(name)+'</b>). Open it anytime to view or print it.');
-    }catch(e){
-      help('Could not download here. Open this page in Safari or Chrome (tap the <b>•••</b> or share button → <b>Open in Browser</b>) and try again, or call us at 954-605-4746 and we will email you a copy.');
+    let f = (window.jspdf && window.jspdf.jsPDF) ? pdfFile() : null;
+    if(!f){ try{ await Promise.race([loadJsPdf(), new Promise((_,r)=>setTimeout(()=>r(new Error('slow')), 4000))]); f = pdfFile(); }catch(e){} }
+    if(!f){   // no PDF tool (no internet): fall back to a web-page copy
+      const html = publicCopyHTML(title);
+      if(!html){ help('Could not make a copy. Please call GSB General Construction at 954-605-4746 and we will email you one.'); return; }
+      f = new File([new Blob([html], {type:'text/html'})], base+'.html', {type:'text/html'});
     }
+    try{
+      if((navigator.maxTouchPoints||0) > 0 && canShareFile(f)){ await navigator.share({files:[f], title}); return; }
+    }catch(e){ if(e && e.name==='AbortError') return; }
+    try{ saveFile(f); help('✓ Your copy was saved (<b>'+esc(f.name)+'</b>). Open it anytime to view or print it.'); }
+    catch(e){ help('Could not save here. Open this page in Safari or Chrome and try again, or call us at 954-605-4746 and we will email you a copy.'); }
   }));
 }
 function publicEstimateCardHTML(e, alreadySigned){
@@ -8295,6 +8440,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-d</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-e</div>
 </body>
 </html>
