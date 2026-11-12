@@ -279,7 +279,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.12-h';
+const APP_VERSION = 'v2.0-2026.11.12-i';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -2457,7 +2457,7 @@ function openSketchEditorLegacy(existing, readOnly, onSave, ctx){   // sketches 
    World units are INCHES. A plan is:
    { v:2, shapes:[{id, pts:[{x,y}], closed, name, meas:{segIndex:inches}}], openings:[{id, sid, seg, t, w, type}],
      boxes:[{id,x,y,w,d,ang,label}], columns:[{id,x,y,size,round}], notes:[{id,x,y,text}] } */
-function sk2NewPlan(){ return { v:2, shapes:[], openings:[], boxes:[], columns:[], notes:[] }; }
+function sk2NewPlan(){ return { v:2, shapes:[], openings:[], boxes:[], columns:[], notes:[], dims:[], rooms:[] }; }
 function sk2Uid(){ return 'k'+Math.random().toString(36).slice(2,10); }
 
 /* ---- reading a length: the T1R types 12' 4 3/8" — also accepts 148 3/8", 12.5', 12 4, 3.76 m, 376 cm ---- */
@@ -2550,6 +2550,9 @@ function sk2Straighten(raw, pxPerIn){
   let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity; raw.forEach(p=>{ minx=Math.min(minx,p.x); miny=Math.min(miny,p.y); maxx=Math.max(maxx,p.x); maxy=Math.max(maxy,p.y); });
   const diag = Math.hypot(maxx-minx, maxy-miny) || 1;
   const eps = Math.max(7/pxPerIn, diag*0.045);
+  // a stroke that's basically straight is one wall, however shaky the finger was
+  { const a0 = raw[0], a1 = raw[raw.length-1], chord = sk2V.dist(a0, a1); let dev = 0; raw.forEach(q=>{ dev = Math.max(dev, sk2PointSegDist(q, a0, a1).d); });
+    if(chord > 0 && dev < Math.max(12/pxPerIn, chord*0.1)){ const ang = sk2SnapAngle(Math.atan2(a1.y-a0.y, a1.x-a0.x)), d = {x:Math.cos(ang), y:Math.sin(ang)}, mid = {x:(a0.x+a1.x)/2, y:(a0.y+a1.y)/2}; return { pts:[sk2Project(a0, mid, d), sk2Project(a1, mid, d)], closed:false, gap:null }; } }
   let simp = sk2RDP(raw, eps);
   // drop very short pieces (hand jitter at corners)
   const minSeg = Math.max(10/pxPerIn, diag*0.07);
@@ -2646,17 +2649,7 @@ function sk2SetLength(plan, sh, i, L, opts){
       const score = (c<0 ? 1000 : 0) + sk2V.len(vec[k]);
       if(score > bestScore){ bestScore = score; j = k; }
     }
-    if(j < 0){
-      // every parallel wall was already measured: the new number wins, the opposite wall follows (and keeps its ✓ with the new size)
-      let best = -Infinity;
-      for(let k=0;k<n;k++){
-        if(k===i) continue; const c = sk2V.dot(dir[k], dir[i]); if(Math.abs(c) < 0.98) continue;
-        const newLen = sk2V.len(vec[k]) + (c<0 ? delta : -delta); if(newLen < 2) continue;
-        const score = (c<0 ? 1000 : 0) + sk2V.len(vec[k]); if(score > best){ best = score; j = k; }
-      }
-      if(j >= 0) res.followed = j;
-    }
-    if(j >= 0){ const c = sk2V.dot(dir[j], dir[i]); vec[j] = sk2V.mul(dir[j], sk2V.len(vec[j]) + (c<0 ? delta : -delta)); if(res.followed===j) sh.meas[j] = sk2V.len(vec[j]); }
+    if(j >= 0){ const c = sk2V.dot(dir[j], dir[i]); vec[j] = sk2V.mul(dir[j], sk2V.len(vec[j]) + (c<0 ? delta : -delta)); }
     else {
       // no parallel wall free: let the last unmeasured wall close the room (it may tilt)
       let k2 = -1; for(let k=n-1;k>=0;k--){ if(k!==i && sh.meas[k]==null){ k2 = k; break; } }
@@ -2680,7 +2673,7 @@ function sk2MeasureStatus(sh, i){
 
 
 /* square up a set of corners (each wall snapped to 0/45/90°, corners where the walls meet) */
-function sk2Squarify(pts, closed){
+function sk2Squarify(pts, closed, keepPieces){
   const n = closed ? pts.length : pts.length-1; if(n < (closed?3:1)) return pts;
   let lines = [];
   for(let i=0;i<n;i++){ const a = pts[i], b = pts[(i+1)%pts.length]; const ang = sk2SnapAngle(Math.atan2(b.y-a.y, b.x-a.x)); lines.push({ p:{x:(a.x+b.x)/2, y:(a.y+b.y)/2}, d:{x:Math.cos(ang), y:Math.sin(ang)}, ang, a, b }); }
@@ -2690,11 +2683,14 @@ function sk2Squarify(pts, closed){
     changed = false;
     for(let i=0;i<lines.length && lines.length > (closed?3:1);i++){
       const j = (i+1) % lines.length; if(!closed && j===0) break;
-      if(same(lines[i], lines[j])){ const A = lines[i].a, B = lines[j].b; lines[i] = { p:{x:(A.x+B.x)/2, y:(A.y+B.y)/2}, d:lines[i].d, ang:lines[i].ang, a:A, b:B }; lines.splice(j,1); changed = true; break; }
+      if(same(lines[i], lines[j])){
+        if(keepPieces){ if(!lines[j].aligned){ lines[j].p = sk2Project(lines[j].p, lines[i].p, lines[i].d); lines[j].aligned = true; changed = true; break; } continue; }
+        const A = lines[i].a, B = lines[j].b; lines[i] = { p:{x:(A.x+B.x)/2, y:(A.y+B.y)/2}, d:lines[i].d, ang:lines[i].ang, a:A, b:B }; lines.splice(j,1); changed = true; break;
+      }
     }
   }
   const out = [];
-  if(closed){ for(let i=0;i<lines.length;i++){ const L1 = lines[(i-1+lines.length)%lines.length], L2 = lines[i]; out.push(sk2LineIntersect(L1.p, L1.d, L2.p, L2.d) || L2.a); } }
+  if(closed){ for(let i=0;i<lines.length;i++){ const L1 = lines[(i-1+lines.length)%lines.length], L2 = lines[i]; out.push(sk2LineIntersect(L1.p, L1.d, L2.p, L2.d) || sk2Project(L2.a, L1.p, L1.d)); } }
   else {
     out.push(sk2Project(pts[0], lines[0].p, lines[0].d));
     for(let i=1;i<lines.length;i++) out.push(sk2LineIntersect(lines[i-1].p, lines[i-1].d, lines[i].p, lines[i].d) || lines[i].a);
@@ -2734,25 +2730,53 @@ function sk2JoinOpenShapes(plan, tol){
   return madeRoom;
 }
 function sk2Anchors(plan, shapes){
-  // remember doors/windows, wall-columns and measurements by position so they survive re-numbering of walls
-  const ids = shapes.map(s=>s.id), at = (sh, seg, t)=>{ const [a,b] = sk2SegEnds(sh, seg); return {x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t}; };
+  // remember doors/windows, wall-columns, measuring lines and measurements by position so they survive re-numbering of walls
+  const ids = shapes.map(s=>s.id), at = (sid, seg, t)=>{ const sh = plan.shapes.find(s=>s.id===sid); const [a,b] = sk2SegEnds(sh, seg); return {x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t}; };
   return {
-    openings: plan.openings.filter(o=>ids.includes(o.sid)).map(o=>({o, p:at(plan.shapes.find(s=>s.id===o.sid), o.seg, o.t)})),
-    columns: plan.columns.filter(c=>c.sid && ids.includes(c.sid)).map(c=>({c, p:at(plan.shapes.find(s=>s.id===c.sid), c.seg, c.t)})),
+    openings: plan.openings.filter(o=>ids.includes(o.sid)).map(o=>({o, p:at(o.sid, o.seg, o.t)})),
+    columns: plan.columns.filter(c=>c.sid && ids.includes(c.sid)).map(c=>({c, p:at(c.sid, c.seg, c.t)})),
+    dims: (plan.dims||[]).flatMap(d=>['a','b'].filter(k=>ids.includes(d[k].sid)).map(k=>({ref:d[k], d, p:at(d[k].sid, d[k].seg, d[k].t)}))),
     meas: shapes.flatMap(sh=>Object.keys(sh.meas||{}).map(k=>{ const [a,b] = sk2SegEnds(sh, +k); return {a:{...a}, b:{...b}, L:sh.meas[k]}; })),
   };
 }
-function sk2Reattach(plan, sh, keep, oldIds){
-  const near = (p)=>{ let best = null; for(let i=0;i<sk2SegCount(sh);i++){ const [a,b] = sk2SegEnds(sh,i); const r = sk2PointSegDist(p,a,b); if(!best || r.d < best.d) best = {seg:i, t:r.t, d:r.d}; } return best; };
-  keep.openings.forEach(({o,p})=>{ const r = near(p); if(r){ o.sid = sh.id; o.seg = r.seg; o.t = r.t; } });
-  keep.columns.forEach(({c,p})=>{ const r = near(p); if(r){ c.sid = sh.id; c.seg = r.seg; c.t = r.t; } });
-  sh.meas = {};
-  keep.meas.forEach(m=>{ for(let i=0;i<sk2SegCount(sh);i++){ const [a,b] = sk2SegEnds(sh,i); if((sk2V.dist(a,m.a)<0.6 && sk2V.dist(b,m.b)<0.6) || (sk2V.dist(a,m.b)<0.6 && sk2V.dist(b,m.a)<0.6)) sh.meas[i] = m.L; } });
+function sk2Reattach(plan, sh, keep){ return sk2ReattachMulti(plan, [sh], keep); }
+function sk2ReattachMulti(plan, shapes, keep){
+  const near = (p)=>{ let best = null; shapes.forEach(sh=>{ for(let i=0;i<sk2SegCount(sh);i++){ const [a,b] = sk2SegEnds(sh,i); const r = sk2PointSegDist(p,a,b); if(!best || r.d < best.d) best = {sh, seg:i, t:r.t, d:r.d}; } }); return best; };
+  const gone = { openings:new Set(), columns:new Set(), dims:new Set() };
+  keep.openings.forEach(({o,p})=>{ const r = near(p); if(r && r.d < 2){ o.sid = r.sh.id; o.seg = r.seg; o.t = r.t; } else gone.openings.add(o); });
+  keep.columns.forEach(({c,p})=>{ const r = near(p); if(r && r.d < 2){ c.sid = r.sh.id; c.seg = r.seg; c.t = r.t; } else { delete c.sid; delete c.seg; delete c.t; c.x = p.x; c.y = p.y; } });
+  keep.dims.forEach(({ref,d,p})=>{ const r = near(p); if(r && r.d < 2){ ref.sid = r.sh.id; ref.seg = r.seg; ref.t = r.t; } else gone.dims.add(d); });
+  plan.openings = plan.openings.filter(o=>!gone.openings.has(o));
+  plan.dims = (plan.dims||[]).filter(d=>!gone.dims.has(d));
+  shapes.forEach(sh=>{
+    sh.meas = {};
+    keep.meas.forEach(m=>{ for(let i=0;i<sk2SegCount(sh);i++){ const [a,b] = sk2SegEnds(sh,i); if((sk2V.dist(a,m.a)<0.6 && sk2V.dist(b,m.b)<0.6) || (sk2V.dist(a,m.b)<0.6 && sk2V.dist(b,m.a)<0.6)) sh.meas[i] = m.L; } });
+  });
+}
+/* split one wall into two pieces (to measure it in parts) */
+function sk2SplitSeg(plan, sh, seg, t){
+  const keep = sk2Anchors(plan, [sh]);
+  const [a,b] = sk2SegEnds(sh, seg); t = Math.max(0.05, Math.min(0.95, t));
+  sh.pts.splice(seg+1, 0, {x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t});
+  sk2Reattach(plan, sh, keep);
+}
+/* remove one wall piece (a closed room opens up; a run of walls splits in two) */
+function sk2DeleteSeg(plan, sh, seg){
+  const keep = sk2Anchors(plan, [sh]); let shapes = [sh];
+  if(sh.closed){ sh.pts = sh.pts.slice(seg+1).concat(sh.pts.slice(0, seg+1)); sh.closed = false; }
+  else {
+    const left = sh.pts.slice(0, seg+1), right = sh.pts.slice(seg+1);
+    sh.pts = left;
+    if(right.length >= 2){ const ns = { id:sk2Uid(), pts:right, closed:false, name:'', meas:{} }; plan.shapes.push(ns); shapes.push(ns); }
+  }
+  shapes = shapes.filter(x=>x.pts.length >= 2);
+  plan.shapes = plan.shapes.filter(x=>x.pts.length >= 2);
+  sk2ReattachMulti(plan, shapes, keep);
 }
 function sk2CloseShape(plan, sh, gap){
   const keep = sk2Anchors(plan, [sh]);
   sh.pts = sh.pts.slice(0, -1); sh.closed = true;
-  if(!Object.keys(sh.meas||{}).length) sh.pts = sk2Squarify(sh.pts, true);
+  if(!Object.keys(sh.meas||{}).length) sh.pts = sk2Squarify(sh.pts, true, true);
   sk2Reattach(plan, sh, keep, [sh.id]);
   if(!sh.name){ const used = plan.shapes.filter(s=>s.closed && s!==sh).length; sh.name = 'Room '+(used+1); }
 }
@@ -2770,29 +2794,145 @@ function sk2MoveCornerOrtho(sh, k, t){
 }
 /* when one room changes size, rooms that were touching it move along with it */
 function sk2Propagate(plan, sh, oldPts){
-  const moved = [{ shape:sh, from:oldPts, to:sh.pts }], done = new Set([sh.id]);
-  const items = (shape, pts)=>({ boxes: plan.boxes.filter(b=>sk2PointInPoly(b, pts)), notes: plan.notes.filter(n=>sk2PointInPoly(n, pts)), cols: plan.columns.filter(c=>!c.sid && sk2PointInPoly(c, pts)) });
+  const moved = [{ shape:sh, from:oldPts, to:sh.pts.map(p=>({...p})), closed:sh.closed }], done = new Set([sh.id]);
+  const items = (pts)=>({ boxes: plan.boxes.filter(b=>sk2PointInPoly(b, pts)), notes: plan.notes.filter(n=>sk2PointInPoly(n, pts)), cols: plan.columns.filter(c=>!c.sid && sk2PointInPoly(c, pts)) });
+  let count = 0;
   while(moved.length){
     const m = moved.shift();
-    for(let k=0;k<m.from.length;k++){
-      const d = sk2V.sub(m.to[k], m.from[k]); if(sk2V.len(d) < 0.01) continue;
-      plan.shapes.forEach(o=>{
-        if(done.has(o.id)) return;
-        if(!o.pts.some(p=>sk2V.dist(p, m.from[k]) < 0.75)) return;
-        const before = o.pts.map(p=>({...p}));
-        const inside = o.closed ? items(o, before) : {boxes:[],notes:[],cols:[]};
-        // every corner this room shares with the one that changed
-        const hits = [];
-        o.pts.forEach((p,j)=>{ for(let q=0;q<m.from.length;q++){ if(sk2V.dist(p, m.from[q]) < 0.75){ hits.push({j, d:sk2V.sub(m.to[q], m.from[q])}); break; } } });
-        const allSame = hits.every(h=>sk2V.dist(h.d, hits[0].d) < 0.01);
-        if(hits.length <= 1 || allSame) o.pts = o.pts.map(p=>sk2V.add(p, d));
-        else hits.forEach(h=>sk2MoveCornerOrtho(o, h.j, sk2V.add(before[h.j], h.d)));     // shares a whole wall: stretch to stay attached
+    const mseg = m.closed ? m.from.length : m.from.length-1;
+    const deltaAt = (p)=>{
+      for(let q=0;q<m.from.length;q++){ if(sk2V.dist(p, m.from[q]) < 0.75) return sk2V.sub(m.to[q], m.from[q]); }
+      for(let q=0;q<mseg;q++){ const a = m.from[q], b = m.from[(q+1)%m.from.length], r = sk2PointSegDist(p, a, b); if(r.d < 0.75){ const da = sk2V.sub(m.to[q], a), db = sk2V.sub(m.to[(q+1)%m.to.length], b); return { x:da.x+(db.x-da.x)*r.t, y:da.y+(db.y-da.y)*r.t }; } }
+      return null;
+    };
+    plan.shapes.forEach(o=>{
+      if(done.has(o.id)) return;
+      const hits = []; o.pts.forEach((p,j)=>{ const d = deltaAt(p); if(d) hits.push({j, d}); });
+      if(!hits.length || hits.every(h=>sk2V.len(h.d) < 0.01)) return;
+      const before = o.pts.map(p=>({...p}));
+      const allSame = hits.every(h=>sk2V.dist(h.d, hits[0].d) < 0.01);
+      if(o.closed && (hits.length === 1 || allSame)){
+        const inside = items(before), d = hits[0].d;
+        o.pts = o.pts.map(p=>sk2V.add(p, d));
         inside.boxes.concat(inside.notes, inside.cols).forEach(it=>{ it.x += d.x; it.y += d.y; });
-        done.add(o.id); moved.push({ shape:o, from:before, to:o.pts });
-      });
-    }
+      } else hits.forEach(h=>sk2MoveCornerOrtho(o, h.j, sk2V.add(before[h.j], h.d)));     // stretch to stay attached
+      done.add(o.id); count++; moved.push({ shape:o, from:before, to:o.pts.map(p=>({...p})), closed:o.closed });
+    });
   }
-  return done.size - 1;
+  return count;
+}
+/* ---- rooms come from the walls: every area the walls close off is a room (rooms inside rooms too) ---- */
+let _sk2FaceCache = { key:null, faces:[] };
+function sk2Faces(plan){
+  const key = JSON.stringify(plan.shapes.map(s=>[s.id, s.closed, s.pts]));
+  if(_sk2FaceCache.key === key) return _sk2FaceCache.faces;
+  const TOL = 0.6;
+  const nodes = [];
+  const nodeAt = (p, tag)=>{
+    for(const n of nodes){ if(Math.abs(n.x-p.x) <= TOL && Math.abs(n.y-p.y) <= TOL && Math.hypot(n.x-p.x, n.y-p.y) <= TOL){ if(tag && !n.tag) n.tag = tag; return n; } }
+    const n = { id:nodes.length, x:p.x, y:p.y, tag:tag||null }; nodes.push(n); return n;
+  };
+  const segs = [];
+  plan.shapes.forEach(sh=>{ for(let i=0;i<sk2SegCount(sh);i++){ const [a,b] = sk2SegEnds(sh,i); if(sk2V.dist(a,b) > TOL) segs.push({ a, b, sid:sh.id, seg:i, ta:sh.id+':'+i, tb:sh.id+':'+((i+1)%sh.pts.length) }); } });
+  // where walls touch or cross, they are split into pieces that meet at a corner
+  const cuts = segs.map(()=>[]);
+  const allPts = []; plan.shapes.forEach(sh=>sh.pts.forEach(p=>allPts.push(p)));
+  segs.forEach((s,i)=>{
+    const ab = sk2V.sub(s.b, s.a), L = sk2V.len(ab);
+    allPts.forEach(p=>{ const r = sk2PointSegDist(p, s.a, s.b); if(r.d <= TOL && r.t*L > TOL && (1-r.t)*L > TOL) cuts[i].push({t:r.t, p:sk2V.add(s.a, sk2V.mul(ab, r.t))}); });
+    segs.forEach((o,j)=>{
+      if(j<=i) return;
+      const d1 = ab, d2 = sk2V.sub(o.b, o.a), den = d1.x*d2.y - d1.y*d2.x; if(Math.abs(den) < 1e-9) return;
+      const t = ((o.a.x-s.a.x)*d2.y - (o.a.y-s.a.y)*d2.x)/den, u = ((o.a.x-s.a.x)*d1.y - (o.a.y-s.a.y)*d1.x)/den;
+      if(t*L > TOL && (1-t)*L > TOL && u > 1e-6 && u < 1-1e-6){
+        const p = sk2V.add(s.a, sk2V.mul(d1, t)), L2 = sk2V.len(d2);
+        cuts[i].push({t, p}); if(u*L2 > TOL && (1-u)*L2 > TOL) cuts[j].push({t:u, p});
+      }
+    });
+  });
+  const edges = new Map();   // "n1-n2" → edge (overlapping walls drawn twice count once)
+  segs.forEach((s,i)=>{
+    const pts = [{t:0, p:s.a, tag:s.ta}].concat(cuts[i].sort((x,y)=>x.t-y.t), [{t:1, p:s.b, tag:s.tb}]);
+    for(let k=0;k<pts.length-1;k++){
+      const n1 = nodeAt(pts[k].p, pts[k].tag), n2 = nodeAt(pts[k+1].p, pts[k+1].tag); if(n1===n2) continue;
+      const id = n1.id < n2.id ? n1.id+'-'+n2.id : n2.id+'-'+n1.id;
+      if(!edges.has(id)) edges.set(id, { u:n1, v:n2, sid:s.sid, seg:s.seg });
+    }
+  });
+  // drop walls that dead-end (they don't close anything off)
+  const adj = new Map(); nodes.forEach(n=>adj.set(n.id, []));
+  edges.forEach(e=>{ adj.get(e.u.id).push(e); adj.get(e.v.id).push(e); });
+  let pruned = true;
+  while(pruned){ pruned = false; adj.forEach((list, nid)=>{ if(list.length === 1){ const e = list[0]; const o = e.u.id===nid ? e.v : e.u; adj.set(nid, []); adj.set(o.id, adj.get(o.id).filter(x=>x!==e)); pruned = true; } }); }
+  const out = new Map();
+  adj.forEach((list, nid)=>{ const n = nodes[nid]; out.set(nid, list.map(e=>{ const o = e.u.id===nid ? e.v : e.u; return { to:o, e, ang:Math.atan2(o.y-n.y, o.x-n.x) }; }).sort((a,b)=>a.ang-b.ang)); });
+  // walk around every face
+  const used = new Set(), raw = [];
+  out.forEach((list, nid)=>{
+    list.forEach(h0=>{
+      const k0 = nid+'>'+h0.to.id; if(used.has(k0)) return;
+      const poly = [], eds = []; let from = nid, h = h0, guard = 0;
+      while(guard++ < 2000){
+        const k = from+'>'+h.to.id; if(used.has(k)) break; used.add(k);
+        poly.push(nodes[from]); eds.push(h.e);
+        const at = h.to.id, lst = out.get(at); const back = lst.findIndex(x=>x.to.id===from);
+        const nx = lst[(back - 1 + lst.length) % lst.length];
+        from = at; h = nx;
+      }
+      if(poly.length >= 3){ let a = 0; for(let i=0;i<poly.length;i++){ const p = poly[i], q = poly[(i+1)%poly.length]; a += p.x*q.y - q.x*p.y; } raw.push({ pts:poly.map(p=>({x:p.x, y:p.y})), nodes:poly, edges:eds, signed:a/2 }); }
+    });
+  });
+  // bounded faces have positive signed area with this walk (y grows downward); negative = outside of a group of walls
+  const bounded = raw.filter(f=>f.signed > 1e-3), outers = raw.filter(f=>f.signed < -1e-3);
+  bounded.forEach(f=>{ f.area = f.signed; f.holes = []; f.perim = f.edges.reduce((s,e)=>s+Math.hypot(e.u.x-e.v.x, e.u.y-e.v.y), 0); f.key = f.nodes.map(n=>n.tag||('n'+Math.round(n.x)+','+Math.round(n.y))).sort().join('|'); });
+  // a separate group of walls sitting inside a room is a hole in that room's floor
+  outers.forEach(o=>{
+    const p = o.pts[0]; let best = null;
+    bounded.forEach(f=>{ if(f.nodes.some(n=>o.nodes.includes(n))) return; if(sk2PointInPoly(p, f.pts) && (!best || f.area < best.area)) best = f; });
+    if(best) best.holes.push(o.pts);
+  });
+  bounded.forEach(f=>{ f.net = f.area - f.holes.reduce((s,h)=>{ let a = 0; for(let i=0;i<h.length;i++){ const p = h[i], q = h[(i+1)%h.length]; a += p.x*q.y - q.x*p.y; } return s + Math.abs(a)/2; }, 0); });
+  _sk2FaceCache = { key, faces:bounded };
+  return bounded;
+}
+function sk2FaceInside(f, p){ return sk2PointInPoly(p, f.pts) && !f.holes.some(h=>sk2PointInPoly(p, h)); }
+function sk2FaceAt(plan, p){ let best = null; sk2Faces(plan).forEach(f=>{ if(sk2FaceInside(f, p) && (!best || f.net < best.net)) best = f; }); return best; }
+function sk2InteriorPoint(f){
+  let a = 0, cx = 0, cy = 0; const pts = f.pts;
+  for(let i=0;i<pts.length;i++){ const p = pts[i], q = pts[(i+1)%pts.length], k = p.x*q.y - q.x*p.y; a += k; cx += (p.x+q.x)*k; cy += (p.y+q.y)*k; }
+  const c = Math.abs(a) > 1e-6 ? {x:cx/(3*a), y:cy/(3*a)} : pts[0];
+  if(sk2FaceInside(f, c)) return c;
+  let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity; pts.forEach(p=>{ minx=Math.min(minx,p.x); miny=Math.min(miny,p.y); maxx=Math.max(maxx,p.x); maxy=Math.max(maxy,p.y); });
+  let best = null;
+  for(let i=1;i<20;i++) for(let j=1;j<20;j++){ const q = {x:minx+(maxx-minx)*i/20, y:miny+(maxy-miny)*j/20}; if(!sk2FaceInside(f, q)) continue; let d = Infinity; for(let k=0;k<pts.length;k++){ d = Math.min(d, sk2PointSegDist(q, pts[k], pts[(k+1)%pts.length]).d); } if(!best || d > best.d) best = {q, d}; }
+  return best ? best.q : c;
+}
+/* each room keeps its name as walls change: names are tied to the room's corners, falling back to where the label sits */
+function sk2SyncRooms(plan){
+  if(!Array.isArray(plan.rooms)) plan.rooms = [];
+  const faces = sk2Faces(plan), taken = new Set();
+  plan.rooms.forEach(r=>{ r._f = null; });
+  plan.rooms.forEach(r=>{ const f = faces.find(x=>!taken.has(x) && x.key===r.key); if(f){ r._f = f; taken.add(f); } });
+  plan.rooms.forEach(r=>{ if(r._f) return; let best = null; faces.forEach(f=>{ if(!taken.has(f) && sk2FaceInside(f, r)) { if(!best || f.net < best.net) best = f; } }); if(best){ r._f = best; taken.add(best); } });
+  plan.rooms = plan.rooms.filter(r=>r._f);
+  faces.forEach(f=>{
+    if(taken.has(f)) return;
+    let n = plan.rooms.length + 1; const names = new Set(plan.rooms.map(r=>r.name)); while(names.has('Room '+n)) n++;
+    const r = { id:sk2Uid(), name:'Room '+n, _f:f }; plan.rooms.push(r); taken.add(f);
+  });
+  plan.rooms.forEach(r=>{ r.key = r._f.key; const p = sk2InteriorPoint(r._f); if(!sk2FaceInside(r._f, r) || r._moved) { r.x = p.x; r.y = p.y; } r._moved = false; });
+  return plan.rooms;
+}
+function sk2RoomFace(plan, room){ return sk2Faces(plan).find(f=>f.key===room.key) || null; }
+function sk2DoorsOnFace(plan, f){
+  let w = 0;
+  plan.openings.forEach(o=>{
+    if(o.type==='window') return;
+    const sh = plan.shapes.find(s=>s.id===o.sid); if(!sh) return;
+    const [a,b] = sk2SegEnds(sh, o.seg); const c = {x:a.x+(b.x-a.x)*o.t, y:a.y+(b.y-a.y)*o.t};
+    for(let i=0;i<f.pts.length;i++){ if(sk2PointSegDist(c, f.pts[i], f.pts[(i+1)%f.pts.length]).d < 1){ w += o.w; break; } }
+  });
+  return w;
 }
 
 /* ---- totals ---- */
@@ -2804,13 +2944,12 @@ function sk2Area(sh){
 function sk2DoorWidthOn(plan, sh, seg){ return plan.openings.filter(o=>o.sid===sh.id && (seg==null || o.seg===seg) && o.type!=='window').reduce((s,o)=>s+o.w, 0); }
 function sk2ShapeLF(plan, sh){ let t = 0; for(let i=0;i<sk2SegCount(sh);i++) t += sk2SegLen(sh,i); return Math.max(0, t - sk2DoorWidthOn(plan, sh)); }
 function sk2Totals(plan){
-  let area = 0, lf = 0, rooms = [];
-  plan.shapes.forEach(sh=>{
-    const a = sk2Area(sh), l = sk2ShapeLF(plan, sh);
-    lf += l;
-    if(sh.closed){ area += a; rooms.push({ id:sh.id, name:sh.name||'Room', sqft:a/144, lf:l/12, measured: Object.keys(sh.meas||{}).length, walls: sk2SegCount(sh) }); }
+  const rooms = sk2SyncRooms(plan).map(r=>{
+    const f = r._f, srcs = new Set(f.edges.map(e=>e.sid+':'+e.seg));
+    const measured = [...srcs].filter(k=>{ const [sid, seg] = k.split(':'); const sh = plan.shapes.find(x=>x.id===sid); return sh && sh.meas && sh.meas[+seg]!=null; }).length;
+    return { id:r.id, name:r.name||'Room', sqft:f.net/144, lf:Math.max(0, f.perim - sk2DoorsOnFace(plan, f))/12, measured, walls:srcs.size };
   });
-  return { sqft: area/144, lf: lf/12, rooms };
+  return { sqft: rooms.reduce((s,r)=>s+r.sqft, 0), lf: rooms.reduce((s,r)=>s+r.lf, 0), rooms };
 }
 function sk2Centroid(sh){
   const pts = sh.pts; let a = 0, cx = 0, cy = 0;
@@ -2853,7 +2992,9 @@ function openSketchEditor(existing, readOnly, onSave, ctx){
 }
 function sk2Open(plan, readOnly, onSave, ctx){
   plan = plan ? JSON.parse(JSON.stringify(plan)) : sk2NewPlan();
-  ['shapes','openings','boxes','columns','notes'].forEach(k=>{ if(!Array.isArray(plan[k])) plan[k] = []; });
+  ['shapes','openings','boxes','columns','notes','dims'].forEach(k=>{ if(!Array.isArray(plan[k])) plan[k] = []; });
+  if(!Array.isArray(plan.rooms)){ plan.rooms = plan.shapes.filter(sh=>sh.closed && sh.name).map(sh=>{ const c = sk2Centroid(sh); return { id:sk2Uid(), name:sh.name, x:c.x, y:c.y, key:null }; }); }
+  sk2SyncRooms(plan);
   let tapeOn = true; try{ tapeOn = localStorage.getItem('gsb2-sk2-tape')!=='0'; }catch(e){}
   STATE.sk2 = { plan, readOnly:!!readOnly, onSave, ctx: ctx||null, tool: readOnly ? 'select' : 'draw', view:{s:2, ox:0, oy:0},
     sel:null, picks:[], undo:[], dirty:false, stroke:null, pointers:new Map(), drag:null, pinch:null, lastBox:SK2_BOX_PRESETS[0], tapeOn, boxField:'w' };
@@ -2935,7 +3076,7 @@ function sk2BuildDom(){
   <div class="sk2-body">
     ${S.readOnly ? '' : `<div class="sk2-tools">
       ${toolBtn('draw','✏️','Draw walls')}${toolBtn('select','👆','Select / move')}${toolBtn('door','🚪','Door')}${toolBtn('window','🪟','Window')}
-      ${toolBtn('box','⬛','Box')}${toolBtn('column','<span style="color:#D32F2F">■</span>','Column')}${toolBtn('note','📝','Note')}${toolBtn('pick','📐','Add up LF')}
+      ${toolBtn('box','⬛','Box')}${toolBtn('column','<span style="color:#D32F2F">■</span>','Column')}${toolBtn('note','📝','Note')}${toolBtn('dim','↔️','Measuring line')}${toolBtn('pick','📐','Add up LF')}
     </div>`}
     <div class="sk2-canvas-wrap"><canvas id="sk2-canvas"></canvas><div class="sk2-hint" id="sk2-hint"></div><div class="sk2-toast" id="sk2-toast"></div>
       <input id="sk2-tape" inputmode="none" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Tape measure input"></div>
@@ -2946,7 +3087,7 @@ function sk2BuildDom(){
   cv.addEventListener('pointerdown', sk2Down); cv.addEventListener('pointermove', sk2Move);
   cv.addEventListener('pointerup', sk2Up); cv.addEventListener('pointercancel', sk2Up);
   cv.addEventListener('wheel', (e)=>{ e.preventDefault(); sk2ZoomAt(e.offsetX, e.offsetY, e.deltaY<0 ? 1.12 : 1/1.12); }, {passive:false});
-  root.querySelectorAll('[data-sk2-tool]').forEach(b=>b.addEventListener('click', ()=>{ S.tool = b.dataset.sk2Tool; if(S.tool!=='pick') S.picks = []; if(S.tool==='pick'){ S.sel = null; } sk2Draw(); sk2Panel(); }));
+  root.querySelectorAll('[data-sk2-tool]').forEach(b=>b.addEventListener('click', ()=>{ S.tool = b.dataset.sk2Tool; S.dimStart = null; if(S.tool!=='pick') S.picks = []; if(S.tool==='pick'){ S.sel = null; } sk2Draw(); sk2Panel(); }));
   root.querySelectorAll('[data-sk2]').forEach(b=>b.addEventListener('click', ()=>sk2TopAction(b.dataset.sk2)));
   const tape = root.querySelector('#sk2-tape');
   let tTimer = null;
@@ -3033,11 +3174,12 @@ function sk2Draw(target){
   }
   const plan = S.plan, sel = target ? null : S.sel;
   const wallPx = Math.max(3, 4.5*view.s);
-  // room fills
-  plan.shapes.forEach(sh=>{
-    if(!sh.closed) return;
-    ctx.beginPath(); sh.pts.forEach((p,i)=>{ const q = W2S(p); i ? ctx.lineTo(q.x,q.y) : ctx.moveTo(q.x,q.y); }); ctx.closePath();
-    ctx.fillStyle = (sel && sel.kind==='room' && sel.sid===sh.id) ? 'rgba(46,92,138,0.14)' : 'rgba(122,106,69,0.06)'; ctx.fill();
+  const rooms = sk2SyncRooms(plan);
+  // room fills (every area the walls close off)
+  rooms.forEach(r=>{
+    const f = r._f; ctx.beginPath();
+    [f.pts].concat(f.holes).forEach(poly=>{ poly.forEach((p,i)=>{ const q = W2S(p); i ? ctx.lineTo(q.x,q.y) : ctx.moveTo(q.x,q.y); }); ctx.closePath(); });
+    ctx.fillStyle = (sel && sel.kind==='room' && sel.rid===r.id) ? 'rgba(46,92,138,0.16)' : 'rgba(122,106,69,0.06)'; ctx.fill('evenodd');
   });
   // walls with openings cut out
   plan.shapes.forEach(sh=>{
@@ -3050,7 +3192,7 @@ function sk2Draw(target){
       let t = 0; const pieces = [];
       ops.forEach(x=>{ if(x.t0 > t) pieces.push([t, x.t0]); t = Math.max(t, x.t1); }); if(t < 1) pieces.push([t,1]);
       const isSel = sel && sel.kind==='wall' && sel.sid===sh.id && sel.seg===i;
-      const isPick = S.picks.some(p=>p.sid===sh.id && p.seg===i);
+      const isPick = S.picks.some(p=>p.sid===sh.id && p.seg===i) || (!target && S.dimStart && S.dimStart.sid===sh.id && S.dimStart.seg===i);
       ctx.lineCap = 'square'; ctx.lineWidth = wallPx; ctx.strokeStyle = isSel ? '#1F6FD1' : isPick ? '#D9822B' : '#2A261E';
       pieces.forEach(([u,v])=>{ const p = at(u), q = at(v); ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); });
       // doors & windows
@@ -3118,16 +3260,32 @@ function sk2Draw(target){
     ctx.beginPath(); co.round ? ctx.arc(0,0, (pos.onWall ? wallPx/2 : along/2), 0, Math.PI*2) : ctx.rect(-along/2, -across/2, along, across);
     ctx.fill(); ctx.stroke(); ctx.restore();
   });
+  // measuring lines (wall to wall)
+  (plan.dims||[]).forEach(d=>{
+    const g = sk2DimGeom(plan, d); if(!g) return;
+    const A = W2S(g.A), B = W2S(g.B), isSel = sel && sel.kind==='dim' && sel.id===d.id;
+    const st = d.val==null ? 'est' : Math.abs(g.cur - d.val) < 0.15 ? 'ok' : 'off';
+    const col = isSel ? '#1F6FD1' : st==='off' ? '#B3261E' : '#2E5C8A';
+    ctx.strokeStyle = col; ctx.lineWidth = isSel ? 2.5 : 1.6; ctx.setLineDash([7,4]);
+    ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y); ctx.stroke(); ctx.setLineDash([]);
+    const u = sk2V.norm(sk2V.sub(B,A)), nn = {x:-u.y, y:u.x};
+    [A,B].forEach(P=>{ ctx.beginPath(); ctx.moveTo(P.x-nn.x*7, P.y-nn.y*7); ctx.lineTo(P.x+nn.x*7, P.y+nn.y*7); ctx.stroke(); });
+    const txt = st==='est' ? sk2Fmt(g.cur, true) : sk2Fmt(g.cur);
+    ctx.font = (st==='est'?'italic 600 ':'700 ')+'12.5px Inter, sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    const mx = (A.x+B.x)/2, my = (A.y+B.y)/2, tw = ctx.measureText(txt).width + 10;
+    ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.fillRect(mx-tw/2, my-10, tw, 20); ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.strokeRect(mx-tw/2, my-10, tw, 20);
+    ctx.fillStyle = col; ctx.fillText(txt, mx, my+0.5);
+  });
   // room names + square feet
-  plan.shapes.forEach(sh=>{
-    if(!sh.closed) return;
-    const c = W2S(sk2Centroid(sh));
+  rooms.forEach(r=>{
+    const c = W2S(r), f = r._f;
+    const srcs = new Set(f.edges.map(e=>e.sid+':'+e.seg));
+    const allMeasured = [...srcs].every(k=>{ const [sid, seg] = k.split(':'); const sh = plan.shapes.find(x=>x.id===sid); return sh && sh.meas && sh.meas[+seg]!=null; });
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.font = '700 '+(target?15:14)+'px Oswald, Inter, sans-serif'; ctx.fillStyle = '#2E5C8A';
-    ctx.fillText((sh.name||'Room').toUpperCase(), c.x, c.y-9);
+    ctx.fillText((r.name||'Room').toUpperCase(), c.x, c.y-9);
     ctx.font = '600 12px Inter, sans-serif'; ctx.fillStyle = '#4a4436';
-    const done = Object.keys(sh.meas||{}).length;
-    ctx.fillText((done ? '' : '~') + (sk2Area(sh)/144).toFixed(1)+' sq ft', c.x, c.y+9);
+    ctx.fillText((allMeasured ? '' : '~') + (f.net/144).toFixed(1)+' sq ft', c.x, c.y+9);
   });
   // notes
   plan.notes.forEach(nt=>{
@@ -3167,11 +3325,22 @@ function sk2Status(){
     select:'Tap a wall, room or item · drag items to move · drag the background to pan · pinch to zoom',
     door:'Tap on a wall to add a door', window:'Tap on a wall to add a window', box:'Drag to draw a box any size — or tap for a standard one',
     column:'Tap on a wall to put a column inside it (or anywhere for a free-standing one)', note:'Tap where the note goes', pick:'Tap walls to add up their linear feet',
+    dim: S.dimStart ? 'Now tap the OTHER wall' : 'Tap one wall, then the wall across from it — a measuring line goes between them',
   };
   hint.textContent = S.readOnly ? 'View only — tap a wall or room to see its size' : tips[S.tool]||'';
   document.querySelectorAll('#sk2-root [data-sk2-tool]').forEach(b=>b.classList.toggle('active', b.dataset.sk2Tool===S.tool));
 }
 
+function sk2DimGeom(plan, d){
+  const sa = plan.shapes.find(x=>x.id===d.a.sid), sb = plan.shapes.find(x=>x.id===d.b.sid); if(!sa || !sb) return null;
+  if(d.a.seg >= sk2SegCount(sa) || d.b.seg >= sk2SegCount(sb)) return null;
+  const [a1,a2] = sk2SegEnds(sa, d.a.seg), [b1,b2] = sk2SegEnds(sb, d.b.seg);
+  const A = {x:a1.x+(a2.x-a1.x)*d.a.t, y:a1.y+(a2.y-a1.y)*d.a.t};
+  const da = sk2V.norm(sk2V.sub(a2,a1)), db = sk2V.norm(sk2V.sub(b2,b1));
+  const parallel = Math.abs(da.x*db.y - da.y*db.x) < 0.03;
+  const B = parallel ? sk2Project(A, b1, db) : (()=>{ const r = sk2PointSegDist(A, b1, b2); return {x:b1.x+(b2.x-b1.x)*r.t, y:b1.y+(b2.y-b1.y)*r.t}; })();
+  return { A, B, parallel, cur: sk2V.dist(A,B) };
+}
 function sk2BoxHandle(b){
   if(!b) return null; const a = (b.ang||0)*Math.PI/180, cs = Math.cos(a), sn = Math.sin(a);
   return sk2W2S({ x: b.x + (b.w/2)*cs - (b.d/2)*sn, y: b.y + (b.w/2)*sn + (b.d/2)*cs });
@@ -3191,10 +3360,12 @@ function sk2Hit(sp){
     const [a,b] = sk2SegEnds(sh, o.seg); const c = {x:a.x+(b.x-a.x)*o.t, y:a.y+(b.y-a.y)*o.t};
     if(sk2V.dist(w,c) <= o.w/2 + tol*0.3) return {kind:'opening', id:o.id};
   }
+  for(const d of (plan.dims||[])){ const g = sk2DimGeom(plan, d); if(g){ const r = sk2PointSegDist(sp, sk2W2S(g.A), sk2W2S(g.B)); if(r.d <= 10 && r.t > 0.08 && r.t < 0.92) return {kind:'dim', id:d.id}; } }
   let best = null;
   plan.shapes.forEach(sh=>{ for(let i=0;i<sk2SegCount(sh);i++){ const [a,b] = sk2SegEnds(sh,i); const r = sk2PointSegDist(w,a,b); if(r.d <= tol && (!best || r.d < best.d)) best = {kind:'wall', sid:sh.id, seg:i, d:r.d, t:r.t}; } });
   if(best) return best;
-  for(let k=plan.shapes.length-1;k>=0;k--){ const sh = plan.shapes[k]; if(sh.closed && sk2PointInPoly(w, sh.pts)) return {kind:'room', sid:sh.id}; }
+  for(const d of (plan.dims||[])){ const g = sk2DimGeom(plan, d); if(g && sk2PointSegDist(sp, sk2W2S(g.A), sk2W2S(g.B)).d <= 12) return {kind:'dim', id:d.id}; }
+  const f = sk2FaceAt(plan, w); if(f){ const r = sk2SyncRooms(plan).find(x=>x._f===f); if(r) return {kind:'room', rid:r.id}; }
   return null;
 }
 function sk2NearestWall(w, maxPx){
@@ -3226,7 +3397,7 @@ function sk2Down(e){
   if(S.tool==='box' && !S.readOnly){ const w0 = sk2S2W(p); S.boxDraw = { a:w0, b:w0 }; return; }
   if(S.tool==='select' && !S.readOnly){
     const h = sk2Hit(p);
-    if(h && (h.kind==='box' || h.kind==='column' || h.kind==='note' || h.kind==='opening' || (h.kind==='room' && S.sel && S.sel.kind==='room' && S.sel.sid===h.sid))){
+    if(h && (h.kind==='box' || h.kind==='column' || h.kind==='note' || h.kind==='opening')){
       S.drag = { hit:h, start:sk2S2W(p), pushed:false }; return;
     }
   }
@@ -3305,6 +3476,15 @@ function sk2Up(e){
   if(!tap) return;
   const w = sk2S2W(p);
   if(S.readOnly || S.tool==='select'){ sk2Select(sk2Hit(p)); return; }
+  if(S.tool==='dim'){
+    const nw = sk2NearestWall(w, 26); if(!nw){ sk2Toast('Tap right on a wall'); return; }
+    if(!S.dimStart){ S.dimStart = { sid:nw.sh.id, seg:nw.seg, t:nw.t }; sk2Draw(); sk2Status(); sk2Toast('Now tap the other wall'); return; }
+    if(S.dimStart.sid===nw.sh.id && S.dimStart.seg===nw.seg){ sk2Toast('Tap a different wall'); return; }
+    sk2Push();
+    const d = { id:sk2Uid(), a:S.dimStart, b:{ sid:nw.sh.id, seg:nw.seg, t:nw.t }, val:null };
+    S.dimStart = null; S.plan.dims.push(d); S.dirty = true; sk2Select({kind:'dim', id:d.id});
+    sk2Toast('Measuring line added — measure it with the tape or type it'); return;
+  }
   if(S.tool==='pick'){
     const nw = sk2NearestWall(w, 18); if(!nw) return;
     const h = {sid:nw.sh.id, seg:nw.seg};
@@ -3339,11 +3519,13 @@ function sk2AddStroke(stroke){
   const S = STATE.sk2;
   const r = sk2Straighten(stroke, S.view.s); if(!r){ sk2Draw(); return; }
   sk2Push();
+  const roomsBefore = new Set(sk2SyncRooms(S.plan).map(x=>x.id));
   const sh = { id:sk2Uid(), pts:r.pts, closed:r.closed, name:'', meas:{} };
-  // join up with walls already drawn: the ends of a new line jump onto a nearby corner or wall end
-  const snapPx = 30, others = S.plan.shapes.flatMap(s=>s.pts);
-  const snapTo = (pt)=>{ let best = null; others.forEach(q=>{ const d = sk2V.dist(pt, q); if(d*S.view.s <= snapPx && (!best || d < best.d)) best = {d, q}; }); return best ? {x:best.q.x, y:best.q.y} : null; };
-  if(others.length){
+  // join up with walls already drawn: the ends of a new line jump onto a nearby corner, wall end, or onto a wall
+  const others = S.plan.shapes.flatMap(s=>s.pts);
+  const snapTo = (pt)=>{ let best = null; others.forEach(q=>{ const d = sk2V.dist(pt, q); if(d*S.view.s <= 30 && (!best || d < best.d)) best = {d, q}; }); return best ? {x:best.q.x, y:best.q.y} : null; };
+  const wallNear = (pt)=>{ let best = null; S.plan.shapes.forEach(o=>{ for(let i=0;i<sk2SegCount(o);i++){ const [a,b] = sk2SegEnds(o,i); const rr = sk2PointSegDist(pt,a,b); if(rr.d*S.view.s <= 26 && (!best || rr.d < best.d)) best = {a, b, d:rr.d, p:{x:a.x+(b.x-a.x)*rr.t, y:a.y+(b.y-a.y)*rr.t}}; } }); return best; };
+  if(S.plan.shapes.length){
     if(sh.closed){
       let best = null; sh.pts.forEach((p,k)=>others.forEach(q=>{ const d = sk2V.dist(p,q); if(d*S.view.s <= 26 && (!best || d < best.d)) best = {d, k, v:sk2V.sub(q,p)}; }));
       if(best){
@@ -3353,31 +3535,47 @@ function sk2AddStroke(stroke){
       }
     } else {
       const last = sh.pts.length-1;
-      const s0 = snapTo(sh.pts[0]);
+      // start of the line
+      let s0 = snapTo(sh.pts[0]); if(!s0){ const wn = wallNear(sh.pts[0]); if(wn) s0 = wn.p; }
       if(s0){
         if(last===1){ const dir = sk2V.norm(sk2V.sub(sh.pts[1], sh.pts[0])), len = sk2V.dot(sk2V.sub(sh.pts[1], sh.pts[0]), dir); sh.pts[0] = s0; sh.pts[1] = sk2V.add(s0, sk2V.mul(dir, len)); }
         else sh.pts[0] = s0;
       }
-      const s1 = snapTo(sh.pts[last]); if(s1) sh.pts[last] = s1;
+      // end of the line: onto a corner, or straight on until it meets the wall it stops at
+      const s1 = snapTo(sh.pts[last]);
+      if(s1) sh.pts[last] = s1;
+      else {
+        const wn = wallNear(sh.pts[last]);
+        if(wn){
+          const pa = sh.pts[last-1], dir = sk2V.norm(sk2V.sub(sh.pts[last], pa));
+          const x = sk2LineIntersect(pa, dir, wn.a, sk2V.norm(sk2V.sub(wn.b, wn.a)));
+          sh.pts[last] = (x && sk2V.dist(x, sh.pts[last])*S.view.s <= 40) ? x : wn.p;
+        }
+      }
     }
   }
-  if(sh.closed){ const used = S.plan.shapes.filter(s=>s.closed).length; sh.name = 'Room '+(used+1); }
   S.plan.shapes.push(sh);
   const door = sh.closed ? sk2DoorFromGap(sh, r.gap) : null;
   if(door) S.plan.openings.push(door);
+  if(!sh.closed) sk2JoinOpenShapes(S.plan, 0.05);
   S.dirty = true;
-  if(sh.closed){ sk2Select({kind:'room', sid:sh.id}); sk2Toast(door ? '✓ Room made — door added where you left the gap' : '✓ Room made'); return; }
-  const room = sk2JoinOpenShapes(S.plan, 0.05);
-  if(room){ sk2Select({kind:'room', sid:room.id}); sk2Toast('✓ Your walls connect — room made'); return; }
+  const after = sk2SyncRooms(S.plan), fresh = after.filter(x=>!roomsBefore.has(x.id));
+  if(fresh.length){
+    const nr = fresh.sort((x,y)=>x._f.net-y._f.net)[0];
+    sk2Select({kind:'room', rid:nr.id});
+    sk2Toast('✓ '+nr.name+' made' + (door ? ' — door added where you left the gap' : '') + (fresh.length>1 ? ' (+'+(fresh.length-1)+' more)' : ''));
+    return;
+  }
   S.sel = null; sk2Draw(); sk2Panel();
 }
 function sk2Push(){ const S = STATE.sk2; S.undo.push(JSON.stringify(S.plan)); if(S.undo.length > 60) S.undo.shift(); }
 function sk2Select(h){
   const S = STATE.sk2;
   S.sel = h ? (h.kind==='wall' ? {kind:'wall', sid:h.sid, seg:h.seg} : h) : null;
+  if(h && h.kind==='wall') S.wallT = (h.t!=null ? h.t : 0.5);
   if(S.sel && S.sel.kind==='box') S.boxField = S.boxField || 'w';
   sk2Draw(); sk2Panel();
-  if(S.sel && (S.sel.kind==='wall' || S.sel.kind==='opening' || S.sel.kind==='box' || S.sel.kind==='column')) sk2FocusTape();
+  if(S.sel && (S.sel.kind==='wall' || S.sel.kind==='opening' || S.sel.kind==='box' || S.sel.kind==='column' || S.sel.kind==='dim')) sk2FocusTape();
 }
 
 /* ---------- a measurement arrived (tape or typed) ---------- */
@@ -3417,7 +3615,6 @@ function sk2ApplyLength(L){
     if(!r.ok){ sk2Toast('Could not set that wall'); return; }
     const movedRooms = sk2Propagate(plan, sh, oldPts);
     let msg = '✓ '+sk2Fmt(L);
-    if(r.followed!=null) msg += ' — wall '+(r.followed+1)+' updated to '+sk2Fmt(sk2SegLen(sh, r.followed))+' to match';
     if(movedRooms) msg += ' — '+movedRooms+' connected '+(movedRooms===1?'room':'rooms')+' moved to fit';
     if(r.mismatch > 0.5) msg += ' — measurements are off by '+sk2Fmt(r.mismatch)+'; re-check a wall';
     // walk around the room: jump to the next wall that has no measurement yet
@@ -3425,6 +3622,18 @@ function sk2ApplyLength(L){
     for(let k=1;k<=n;k++){ const j = (sel.seg + k) % n; if(!sh.closed && j===0 && sel.seg===n-1) break; if(sh.meas[j]==null){ next = j; break; } }
     if(next!=null) S.sel = {kind:'wall', sid:sh.id, seg:next}; else msg += ' — all walls measured';
     sk2Toast(msg); sk2Draw(); sk2Panel(); sk2FocusTape(); return;
+  }
+  if(sel.kind==='dim'){
+    const d = (plan.dims||[]).find(x=>x.id===sel.id); const g = d && sk2DimGeom(plan, d); if(!g) return;
+    sk2Push(); d.val = L; S.dirty = true;
+    if(!g.parallel){ sk2Toast('✓ Saved '+sk2Fmt(L)+' (the walls aren\'t parallel, so nothing was moved)'); sk2Draw(); sk2Panel(); return; }
+    const shB = plan.shapes.find(x=>x.id===d.b.sid), old = shB.pts.map(q=>({...q}));
+    const n = sk2V.norm(sk2V.sub(g.B, g.A)), mv = sk2V.mul(n, L - g.cur);
+    const ia = d.b.seg, ib = (d.b.seg+1) % shB.pts.length;
+    shB.pts[ia] = sk2V.add(shB.pts[ia], mv); shB.pts[ib] = sk2V.add(shB.pts[ib], mv);
+    const moved = sk2Propagate(plan, shB, old);
+    sk2Toast('✓ '+sk2Fmt(L)+' — the wall moved to match'+(moved ? ' (and '+moved+' connected '+(moved===1?'wall':'walls')+')' : ''));
+    sk2Draw(); sk2Panel(); return;
   }
   if(sel.kind==='opening'){
     const o = plan.openings.find(x=>x.id===sel.id); if(!o) return; sk2Push();
@@ -3460,23 +3669,32 @@ function sk2Panel(){
     const sh = plan.shapes.find(x=>x.id===sel.sid); if(!sh){ S.sel = null; return sk2Panel(); }
     const n = sk2SegCount(sh), len = sk2SegLen(sh, sel.seg), st = sk2MeasureStatus(sh, sel.seg);
     const done = Object.keys(sh.meas||{}).length;
-    h = `<h3>Wall ${sel.seg+1} of ${n}${sh.closed ? ' — '+esc(sh.name||'Room') : ''}</h3>
+    h = `<h3>Wall ${sel.seg+1} of ${n}</h3>
       <div class="sk2-big" style="color:${st==='ok'?'#1d1a14':st==='off'?'#B3261E':'#8C8576'}">${st==='est' ? sk2Fmt(len,true) : sk2Fmt(len)}</div>
       <div class="sub">${st==='est' ? 'Not measured yet (estimate from your drawing)' : st==='ok' ? '✓ Measured' : '⚠ Was measured at '+sk2Fmt(sh.meas[sel.seg])+' but the room could not close — re-check the walls'} · ${done}/${n} walls measured</div>
       ${tapeBox('wall')}${lenInput('sk2-len')}
       ${ro ? '' : `<div class="sk2-row"><button class="sk2-b" data-sk2p="prevwall">◀ Prev wall</button><button class="sk2-b" data-sk2p="nextwall">Next wall ▶</button></div>
       <div class="sk2-row"><button class="sk2-b" data-sk2p="adddoor">🚪 Add door</button><button class="sk2-b" data-sk2p="addwindow">🪟 Add window</button></div>
-      <div class="sk2-row">${sh.meas && sh.meas[sel.seg]!=null ? `<button class="sk2-b" data-sk2p="unmeasure">Clear measurement</button>` : ''}<button class="sk2-b warn" data-sk2p="delshape">Delete ${sh.closed?'room':'these walls'}</button></div>`}`;
+      <div class="sk2-row"><button class="sk2-b" data-sk2p="split">✂️ Split this wall here</button></div>
+      <div class="sub">Split a wall when you can only measure it in pieces — each piece gets its own measurement.</div>
+      <div class="sk2-row">${sh.meas && sh.meas[sel.seg]!=null ? `<button class="sk2-b" data-sk2p="unmeasure">Clear measurement</button>` : ''}<button class="sk2-b warn" data-sk2p="delwall">Delete this wall</button><button class="sk2-b warn" data-sk2p="delshape">Delete all ${n} connected</button></div>`}`;
   } else if(sel && sel.kind==='room'){
-    const sh = plan.shapes.find(x=>x.id===sel.sid); if(!sh){ S.sel = null; return sk2Panel(); }
-    const n = sk2SegCount(sh), done = Object.keys(sh.meas||{}).length;
-    h = `<h3>${esc(sh.name||'Room')}</h3>
-      <div class="sk2-big">${(sk2Area(sh)/144).toFixed(1)} sq ft</div>
-      <div class="sub">${(sk2ShapeLF(plan, sh)/12).toFixed(1)} LF around the room (doors taken out) · ${done}/${n} walls measured${done<n?' — sizes are estimates until all walls are measured':''}</div>
-      ${ro ? '' : `<div class="sk2-field"><label>Room name</label><input id="sk2-roomname" list="sk2-rooms" value="${esc(sh.name||'')}"><datalist id="sk2-rooms">${SK2_ROOM_NAMES.map(r=>`<option value="${esc(r)}">`).join('')}</datalist></div>
-      <div class="sk2-row"><button class="sk2-b main" data-sk2p="measureroom">📏 Measure walls</button></div>
-      <div class="sub">To move the room: keep it selected, switch to 👆 Select and drag it.</div>
-      <div class="sk2-row"><button class="sk2-b warn" data-sk2p="delshape">Delete room</button></div>`}`;
+    const room = sk2SyncRooms(plan).find(x=>x.id===sel.rid); if(!room){ S.sel = null; return sk2Panel(); }
+    const t = sk2Totals(plan).rooms.find(x=>x.id===room.id) || {sqft:0, lf:0, measured:0, walls:0};
+    h = `<h3>${esc(room.name||'Room')}</h3>
+      <div class="sk2-big">${t.sqft.toFixed(1)} sq ft</div>
+      <div class="sub">${t.lf.toFixed(1)} LF around the room (doors taken out) · ${t.measured}/${t.walls} walls measured${t.measured<t.walls?' — sizes are estimates until all its walls are measured':''}</div>
+      ${ro ? '' : `<div class="sk2-field"><label>Room name</label><input id="sk2-roomname" list="sk2-rooms" value="${esc(room.name||'')}"><datalist id="sk2-rooms">${SK2_ROOM_NAMES.map(r=>`<option value="${esc(r)}">`).join('')}</datalist></div>
+      <div class="sk2-row"><button class="sk2-b main" data-sk2p="measureroom">📏 Measure this room's walls</button></div>
+      <div class="sub">Rooms come from the walls: draw walls across a room to split it (like a bathroom in a corner). To remove a room, delete one of its walls.</div>`}`;
+  } else if(sel && sel.kind==='dim'){
+    const d = (plan.dims||[]).find(x=>x.id===sel.id), g = d && sk2DimGeom(plan, d); if(!g){ S.sel = null; return sk2Panel(); }
+    const st = d.val==null ? 'est' : Math.abs(g.cur - d.val) < 0.15 ? 'ok' : 'off';
+    h = `<h3>↔️ Measuring line</h3>
+      <div class="sk2-big" style="color:${st==='ok'?'#1d1a14':st==='off'?'#B3261E':'#8C8576'}">${st==='est' ? sk2Fmt(g.cur,true) : sk2Fmt(g.cur)}</div>
+      <div class="sub">${st==='est' ? 'Not measured yet' : st==='ok' ? '✓ Measured' : '⚠ Measured at '+sk2Fmt(d.val)+' but walls changed since'} · ${g.parallel ? 'measuring it moves the second wall you tapped to match' : 'these walls aren\'t parallel — the number is saved as a note'}</div>
+      ${tapeBox('distance between the walls')}${lenInput('sk2-len')}
+      ${ro ? '' : `<div class="sk2-row"><button class="sk2-b warn" data-sk2p="deldim">Delete measuring line</button></div>`}`;
   } else if(sel && sel.kind==='opening'){
     const o = plan.openings.find(x=>x.id===sel.id); if(!o){ S.sel = null; return sk2Panel(); }
     h = `<h3>${o.type==='window'?'🪟 Window':'🚪 Door'}</h3><div class="sk2-big">${sk2Fmt(o.w)}</div><div class="sub">Width of the opening. Drag it along the wall in 👆 Select.</div>
@@ -3507,7 +3725,7 @@ function sk2Panel(){
   } else {
     const t = sk2Totals(plan);
     h = `<h3>Totals</h3><div class="sk2-big">${t.sqft.toFixed(1)} sq ft</div><div class="sub">${t.lf.toFixed(1)} LF of walls (doors taken out)</div>
-      ${t.rooms.length ? `<div class="sk2-list">${t.rooms.map(r=>`<div data-sk2p="openroom" data-sid="${r.id}"><span><b>${esc(r.name)}</b>${r.measured<r.walls?' <span style="color:#B8863A">(~)</span>':''}</span><span>${r.sqft.toFixed(1)} sq ft · ${r.lf.toFixed(1)} LF</span></div>`).join('')}</div>` : ''}
+      ${t.rooms.length ? `<div class="sk2-list">${t.rooms.map(r=>`<div data-sk2p="openroom" data-rid="${r.id}"><span><b>${esc(r.name)}</b>${r.measured<r.walls?' <span style="color:#B8863A">(~)</span>':''}</span><span>${r.sqft.toFixed(1)} sq ft · ${r.lf.toFixed(1)} LF</span></div>`).join('')}</div>` : ''}
       ${ro ? '' : `<p class="sub" style="margin-top:12px;"><b>How it works</b><br>1. ✏️ Draw a room with your finger — rough is fine. Leave a gap where the door is.<br>2. Tap a wall, then measure it with the tape (or type it). The wall snaps to the size and the room adjusts. The next wall is picked for you.<br>3. Add 🚪 doors, 🪟 windows, ⬛ cabinets/appliances, ⬤ columns and 📝 notes.<br>4. Pinch to zoom, drag with 👆 Select to pan. Tap <b>Save</b> when done.</p>`}`;
   }
   el.innerHTML = h;
@@ -3515,7 +3733,7 @@ function sk2Panel(){
   el.querySelectorAll('[data-sk2p]').forEach(b=>b.addEventListener('click', ()=>sk2PanelAction(b.dataset.sk2p, b)));
   ['sk2-len','sk2-boxw','sk2-boxd'].forEach(id=>{ const i = document.getElementById(id); if(i) i.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); sk2PanelAction(id==='sk2-len'?'setlen':'boxsize', {dataset:{input:id}}); } }); });
   const rn = document.getElementById('sk2-roomname');
-  if(rn){ const saveName = ()=>{ const sh = plan.shapes.find(x=>x.id===sel.sid); if(sh && rn.value.trim() && rn.value.trim()!==sh.name){ sk2Push(); sh.name = rn.value.trim(); S.dirty = true; sk2Draw(); const h3 = document.querySelector('#sk2-panel h3'); if(h3) h3.textContent = sh.name; } }; rn.addEventListener('change', saveName); rn.addEventListener('blur', saveName); }
+  if(rn){ const saveName = ()=>{ const room = (plan.rooms||[]).find(x=>x.id===sel.rid); if(room && rn.value.trim() && rn.value.trim()!==room.name){ sk2Push(); room.name = rn.value.trim(); S.dirty = true; sk2Draw(); const h3 = document.querySelector('#sk2-panel h3'); if(h3) h3.textContent = room.name; } }; rn.addEventListener('change', saveName); rn.addEventListener('blur', saveName); }
   const bl = document.getElementById('sk2-boxlabel');
   if(bl){ bl.addEventListener('change', ()=>{ const b = plan.boxes.find(x=>x.id===sel.id); if(b){ sk2Push(); b.label = bl.value.trim()||'Box'; S.dirty = true; sk2Draw(); } }); }
 }
@@ -3531,11 +3749,22 @@ function sk2PanelAction(a, btn){
   }
   if(a==='unmeasure'){ const sh = shOf(); sk2Push(); delete sh.meas[sel.seg]; S.dirty = true; sk2Draw(); sk2Panel(); return; }
   if(a==='delshape'){
-    const sh = shOf(); if(!sh || !confirm('Delete '+(sh.closed ? '"'+(sh.name||'Room')+'"' : 'these walls')+'?')) return;
-    sk2Push(); plan.shapes = plan.shapes.filter(x=>x.id!==sh.id); plan.openings = plan.openings.filter(o=>o.sid!==sh.id); S.dirty = true; S.sel = null; sk2Draw(); sk2Panel(); return;
+    const sh = shOf(); if(!sh || !confirm('Delete these '+sk2SegCount(sh)+' connected walls?')) return;
+    sk2Push(); plan.shapes = plan.shapes.filter(x=>x.id!==sh.id); plan.openings = plan.openings.filter(o=>o.sid!==sh.id);
+    plan.columns.forEach(c=>{ if(c.sid===sh.id){ const q = sk2ColPos({shapes:[sh]}, c); delete c.sid; delete c.seg; delete c.t; c.x = q.x; c.y = q.y; } });
+    plan.dims = (plan.dims||[]).filter(d=>d.a.sid!==sh.id && d.b.sid!==sh.id);
+    S.dirty = true; S.sel = null; sk2Draw(); sk2Panel(); return;
   }
-  if(a==='measureroom'){ const sh = shOf(); let j = 0; for(let k=0;k<sk2SegCount(sh);k++){ if(!sh.meas || sh.meas[k]==null){ j = k; break; } } S.sel = {kind:'wall', sid:sh.id, seg:j}; sk2Draw(); sk2Panel(); sk2FocusTape(); return; }
-  if(a==='openroom'){ S.sel = {kind:'room', sid:btn.dataset.sid}; sk2Draw(); sk2Panel(); return; }
+  if(a==='delwall'){ const sh = shOf(); if(!sh) return; sk2Push(); sk2DeleteSeg(plan, sh, sel.seg); S.dirty = true; S.sel = null; sk2Draw(); sk2Panel(); sk2Toast('Wall deleted'); return; }
+  if(a==='split'){ const sh = shOf(); if(!sh) return; sk2Push(); const t = (S.wallT!=null ? S.wallT : 0.5); sk2SplitSeg(plan, sh, sel.seg, t); S.dirty = true; S.sel = {kind:'wall', sid:sh.id, seg:sel.seg}; sk2Draw(); sk2Panel(); sk2FocusTape(); sk2Toast('✂️ Wall split in 2 — measure each piece'); return; }
+  if(a==='deldim'){ sk2Push(); plan.dims = plan.dims.filter(x=>x.id!==sel.id); S.dirty = true; S.sel = null; sk2Draw(); sk2Panel(); return; }
+  if(a==='measureroom'){
+    const room = sk2SyncRooms(plan).find(x=>x.id===sel.rid); if(!room) return;
+    const eds = room._f.edges; let pick = eds[0];
+    for(const e of eds){ const sh = plan.shapes.find(x=>x.id===e.sid); if(sh && (!sh.meas || sh.meas[e.seg]==null)){ pick = e; break; } }
+    S.sel = {kind:'wall', sid:pick.sid, seg:pick.seg}; sk2Draw(); sk2Panel(); sk2FocusTape(); return;
+  }
+  if(a==='openroom'){ S.sel = {kind:'room', rid:btn.dataset.rid}; sk2Draw(); sk2Panel(); return; }
   if(a==='clearpicks'){ S.picks = []; sk2Draw(); sk2Panel(); return; }
   const find = ()=> sel && (sel.kind==='opening' ? plan.openings : sel.kind==='box' ? plan.boxes : sel.kind==='column' ? plan.columns : plan.notes).find(x=>x.id===sel.id);
   const it = find();
@@ -9599,6 +9828,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-h</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-i</div>
 </body>
 </html>
