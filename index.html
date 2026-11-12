@@ -280,7 +280,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.12-n';
+const APP_VERSION = 'v2.0-2026.11.12-o';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -3203,6 +3203,8 @@ function sk2BuildDom(){
     #sk2-root .sk2-item .acts{display:flex;gap:6px;margin-top:6px;}
     #sk2-root .sk2-item .acts button{background:none;border:0;padding:3px 0;margin-right:10px;font:600 12px Inter,sans-serif;color:#7A6A45;cursor:pointer;}
     #sk2-root .sk2-find{margin-top:10px;}
+    #sk2-root .sk2-send{background:#F1F7F2;border:1px solid #CFE3D4;border-radius:9px;padding:9px;margin:12px 0 6px;}
+    #sk2-root .sk2-send .sk2-b.main{background:#3F7D4F;border-color:#3F7D4F;}
     #sk2-root .sk2-find input{width:100%;box-sizing:border-box;padding:10px;border:1.5px solid #CFC6B0;border-radius:8px;font:16px Inter,sans-serif;}
     #sk2-root .sk2-find-row{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:#fff;border:1px solid #EEE7D6;border-radius:8px;padding:6px 8px;margin-top:5px;cursor:pointer;font:13px Inter,sans-serif;color:#2A261E;}
     #sk2-root .sk2-find-row .plus{margin-left:auto;font:700 18px Inter,sans-serif;color:#3F7D4F;}
@@ -4109,9 +4111,25 @@ function sk2CalcHTML(plan, m){
       <div id="sk2c-results">${sk2FindHTML(S.calcQ)}</div>
       ${S.calcQ ? '' : `<div class="sk2-chips">${quick.map(w=>`<button type="button" data-sk2c-q="${w}">${w}</button>`).join('')}</div>`}
     </div>
-    ${items.length ? `<div class="sk2-row"><button class="sk2-b" data-sk2p="calccopy">📄 Copy this list (to paste in an estimate)</button></div>
+    ${items.length ? `${sk2SendHTML()}<div class="sk2-row"><button class="sk2-b" data-sk2p="calccopy">📄 Copy this list as text</button></div>
     <p class="sub" style="font-size:11.5px;">Quick estimates, rounded up — double-check before ordering. Tap ⚙ to change how any item is counted.</p>` : ''}
   </div>`;
+}
+/* ---- send the counted materials to the job's Pricing Calculator (only the prices are left to fill in) ---- */
+function sk2JobRec(){ const c = STATE.sk2 && STATE.sk2.ctx; if(!c || !c.id || !['view-onsite','new-sketch','edit-sketch'].includes(c.kind)) return null; return DB.onsite.find(x=>x.id===c.id) || null; }
+function sk2ExportLines(){
+  const S = STATE.sk2, x = sk2CalcCtx(S.plan, S.multi||sk2EmptySet(), sk2CalcSettings());
+  return sk2CalcItems().map(it=>{ const r = sk2ItemQty(it, x); if(!r.qty) return null;
+    const ut = (['floor','wall','cavity'].includes(it.method) && +it.p===1) ? 'SF' : (it.method==='lf' && +it.p===1) ? 'LF' : 'each';
+    return { materialId:it.mid, qty:r.qty, unitType:ut }; }).filter(Boolean);
+}
+function sk2SendHTML(){
+  const S = STATE.sk2, lines = sk2ExportLines(); if(!lines.length) return '';
+  const f = sk2JobRec(), pb = f && f.pricingBreakdown, dupes = pb ? lines.filter(l=>(pb.materialLines||[]).some(m=>m.materialId===l.materialId)) : [];
+  if(dupes.length) return `<div class="sk2-send"><div class="sub" style="margin:0 0 6px;"><b>${dupes.length} of these ${dupes.length===1?'is':'are'} already on the Pricing Calculator</b> for this job.</div>
+    <div class="sk2-row" style="margin:0;"><button class="sk2-b main" data-sk2p="calcsend" data-mode="add">➕ Add to those amounts</button><button class="sk2-b" data-sk2p="calcsend" data-mode="replace">↺ Replace those amounts</button></div></div>`;
+  return `<div class="sk2-send"><button class="sk2-b main" style="width:100%;" data-sk2p="calcsend" data-mode="add">➕ Add ${lines.length} item${lines.length===1?'':'s'} to the Pricing Calculator</button>
+    <div class="sub" style="margin:5px 0 0;font-size:11.5px;">They go on this job's calculator with the amounts filled in — you just add the prices.</div></div>`;
 }
 function sk2CalcText(plan, m){
   const c = sk2CalcSettings(), x = sk2CalcCtx(plan, m, c);
@@ -4332,6 +4350,22 @@ function sk2Panel(){
 function sk2PanelAction(a, btn){
   const S = STATE.sk2, plan = S.plan, sel = S.sel;
   if(a==='mcopy'){ sk2Copy(); return; }
+  if(a==='calcsend'){
+    const lines = sk2ExportLines(), mode = (btn && btn.dataset && btn.dataset.mode) || 'add';
+    if(!lines.length){ sk2Toast('Nothing to add — the amounts are all 0'); return; }
+    const f = sk2JobRec();
+    if(f){
+      if(!f.pricingBreakdown) f.pricingBreakdown = defaultPricingBreakdown();
+      const r = pcMergeLines(ensurePricingDefaults(f.pricingBreakdown), lines, mode); f.pricingBreakdown.savedAt = nowISO();
+      saveRecord('onsite', f).catch(()=>{});
+      sk2Panel(); sk2Toast('✓ On the Pricing Calculator: '+[r.added ? r.added+' added' : '', r.updated ? r.updated+' updated' : ''].filter(Boolean).join(', ')+' — just fill in the prices');
+    } else {
+      // a worksheet that isn't submitted yet: the list rides with the sketch and goes in when its calculator is opened
+      S.plan.calcSent = (S.plan.calcSent||[]).concat([{ id:sk2Uid(), lines, mode }]); S.dirty = true;
+      sk2Toast('✓ Saved with this sketch — the items go on the Pricing Calculator when you open it for this job. Tap Save on the sketch.');
+    }
+    return;
+  }
   if(a==='calcset'){ S.calcSet = !S.calcSet; sk2Panel(); return; }
   if(a==='calcedit'){ const i = +btn.dataset.i; S.calcEdit = (S.calcEdit===i ? null : i); sk2Panel(); return; }
   if(a==='calcdel'){ const items = sk2CalcItems(), i = +btn.dataset.i; items.splice(i, 1); S.calcEdit = null; sk2SaveItems(); sk2Panel(); return; }
@@ -7851,6 +7885,25 @@ function pbEstimatePreview(pb){
     finishes:(pb.finishLines||[]).filter(l=>(parseFloat(l.price)||0)>0).map(l=>({name:l.name||'Finish', price:parseFloat(l.price)||0})),
     laborFlats:(pb.laborFlatLines||[]).filter(l=>(parseFloat(l.price)||0)>0).map(l=>({name:l.name||'Labor', price:parseFloat(l.price)||0})) };
 }
+/* materials counted on a sketch → calculator lines (amounts filled in, prices left for you) */
+function pcMergeLines(pb, lines, mode){
+  let added = 0, updated = 0;
+  lines.forEach(l=>{
+    const ex = (pb.materialLines||[]).find(m=>m.materialId===l.materialId);
+    if(ex){ ex.qty = String(mode==='replace' ? l.qty : (parseFloat(ex.qty)||0) + l.qty); ex.src = 'sketch'; updated++; }
+    else { pb.materialLines.push({ id:uid(), materialId:l.materialId, unitPrice:'', qty:String(l.qty), unitType:l.unitType||'each', store:'', src:'sketch' }); added++; }
+  });
+  return { added, updated };
+}
+/* lists sent from a sketch of a worksheet that wasn't submitted yet — put them in the first time the calculator opens */
+function pcPullSketchLines(f, pb){
+  const plans = []; try{ (ensureSketches(f)||[]).forEach(k=>{ if(k && k.data && k.data.plan) plans.push(k.data.plan); }); }catch(e){}
+  if(f.floorPlan && f.floorPlan.plan) plans.push(f.floorPlan.plan);
+  if(!Array.isArray(pb.sketchApplied)) pb.sketchApplied = [];
+  let n = 0;
+  plans.forEach(pl=>(pl.calcSent||[]).forEach(sent=>{ if(!sent || pb.sketchApplied.includes(sent.id)) return; pb.sketchApplied.push(sent.id); const r = pcMergeLines(pb, sent.lines||[], sent.mode); n += r.added + r.updated; }));
+  return n;
+}
 function calcFinishesTotal(pb){ return (pb.finishLines||[]).reduce((s,l)=> s + (parseFloat(l.price)||0), 0); }
 let _pcTimer = null, _pcDirty = false;
 function pcStatus(txt){ const el = document.getElementById('pc-save-status'); if(el) el.textContent = txt; }
@@ -7899,6 +7952,7 @@ function refreshPricingCalculatorTotals(pb){
   setText('pc-gt-tax', money(totals.taxAmount));
   setText('pc-gt-total', money(totals.grandTotal));
   setText('pc-bar-total', money(totals.grandTotal));
+  document.querySelectorAll('[data-pricing-action="set-material-price"]').forEach(el=>{ const l = (pb.materialLines||[]).find(x=>x.id===el.dataset.line); if(l) el.classList.toggle('pc-need', !!l.qty && !(parseFloat(l.unitPrice)>0)); });
   setText('pc-sec-materials', money(totals.materialsWithMarkup)); setText('pc-sec-labor', money(totals.laborTotal));
   setText('pc-sec-subs', money(totals.subsWithMarkup)); setText('pc-sec-vendors', money(totals.vendorsWithMarkup));
   setText('pc-sec-permit', money(totals.licenseFee + totals.inspectionsTotal)); setText('pc-sec-finishes', money(totals.finishesTotal)); setText('pc-sec-tax', money(totals.taxAmount));
@@ -7913,6 +7967,9 @@ function renderPricingCalculatorPage(){
   const pb = f.pricingBreakdown;
   if(!pb.vendorLines) pb.vendorLines = [];
   if(pb.vendorsMarkupPct===undefined) pb.vendorsMarkupPct = 0;
+  ensurePricingDefaults(pb);
+  const pulled = pcPullSketchLines(f, pb);
+  if(pulled) setTimeout(()=>{ saveRecord('onsite', f).catch(()=>{}); showToast('📐 '+pulled+' material'+(pulled===1?'':'s')+' from the sketch added — just fill in the prices'); }, 0);
   const totals = calcPricingTotals(pb);
   const subVendors = DB.vendors.filter(v=>v.type==='subcontractor'||v.type==='both');
   const pureVendors = DB.vendors.filter(v=>v.type==='vendor'||v.type==='both');
@@ -7950,6 +8007,9 @@ const PC_CSS = `<style>
   .pc-line-nums{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;}
   .pc-line-tot{margin-left:auto;font-weight:700;white-space:nowrap;}
   .pc-pick{background:#FBFAF6;border:1px dashed var(--line);border-radius:8px;padding:8px;margin-top:8px;}
+  .pc-tag{display:inline-block;font-size:11px;font-weight:600;color:#2E5C8A;background:#EAF1F8;border-radius:10px;padding:1px 7px;margin-left:4px;vertical-align:1px;}
+  .pc-need{border-color:#E0A33A !important;background:#FFF8EA !important;}
+  .pc-needtxt{color:#B26B00;font-weight:600;}
   .pc-store{width:100%;margin-top:8px;border-style:dashed !important;font-size:13px;}
   .pc-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
   .pc-x{padding:4px 9px !important;}
@@ -8000,7 +8060,7 @@ function pcMaterialLineHTML(line){
   return `<div class="pc-line">
     <div class="pc-line-top">
       ${matThumbHTML(mm, 38)}
-      <div class="pc-line-name">${nm ? esc(nm) : '<span class="subtle" style="font-weight:500;">Pick an item below</span>'}</div>
+      <div class="pc-line-name">${nm ? esc(nm) : '<span class="subtle" style="font-weight:500;">Pick an item below</span>'}${line.src==='sketch' ? ' <span class="pc-tag">📐 from sketch</span>' : ''}</div>
       ${nm ? `<button type="button" class="btn ghost small" data-copy="${esc(nm)}">📋 Copy name</button>` : ''}
       ${nm && !editing ? `<button type="button" class="btn ghost small" data-pricing-action="pc-edit-line" data-line="${line.id}">Change item</button>` : ''}
       <button type="button" class="btn ghost small pc-x" data-pricing-action="remove-material-line" data-line="${line.id}" title="Remove this line" aria-label="Remove">✕</button>
@@ -8015,7 +8075,7 @@ function pcMaterialLineHTML(line){
     </div>` : ''}
     <div class="pc-line-nums">
       <select class="pc-in" data-pricing-action="set-unit-type" data-line="${line.id}" title="How this item is priced">${Object.keys(UNIT_TYPES).map(u=>`<option value="${u}" ${ut===u?'selected':''}>${UNIT_TYPES[u].label}</option>`).join('')}</select>
-      <input type="number" step="0.01" class="pc-in" data-pricing-action="set-material-price" data-line="${line.id}" value="${line.unitPrice||''}" placeholder="$ per ${UNIT_TYPES[ut].short}" style="width:120px;">
+      <input type="number" step="0.01" class="pc-in${(line.qty && !(parseFloat(line.unitPrice)>0)) ? ' pc-need' : ''}" data-pricing-action="set-material-price" data-line="${line.id}" value="${line.unitPrice||''}" placeholder="$ per ${UNIT_TYPES[ut].short}" style="width:120px;">
       <span class="subtle">×</span>
       <input type="number" class="pc-in" data-pricing-action="set-qty" data-line="${line.id}" value="${line.qty||''}" placeholder="${ut==='each'?'Qty':'Total '+ut}" style="width:96px;">
       <span class="pc-line-tot">= <span id="pc-line-total-${line.id}">${money(lineTotal)}</span></span>
@@ -8107,7 +8167,7 @@ function pcEditorHTML(f, pb, totals, subVendors, pureVendors){
     <div class="pc-bar"><span class="l">TOTAL</span><b id="pc-bar-total">${money(totals.grandTotal)}</b><a data-pc-jump="1">Breakdown ↓</a></div>
     <div class="pc-layout">
       <div>
-        ${pcSec('materials', '🧱 Materials', pcCount(ml.length,'item','items'), 'pc-sec-materials', totals.materialsWithMarkup, materials, ml.length)}
+        ${pcSec('materials', '🧱 Materials', [pcCount(ml.length,'item','items'), (()=>{ const n = ml.filter(l=>l.qty && !(parseFloat(l.unitPrice)>0)).length; return n ? `<span class="pc-needtxt">${n} need${n===1?'s':''} a price</span>` : ''; })()].filter(Boolean).join(' · '), 'pc-sec-materials', totals.materialsWithMarkup, materials, ml.length)}
         ${pcSec('labor', '👷 Labor', [hasHourly ? (parseFloat(pb.laborHours)||0)+' hrs' : '', pcCount(lf.length,'flat job','flat jobs')].filter(Boolean).join(' · '), 'pc-sec-labor', totals.laborTotal, labor, hasHourly || lf.length)}
         ${pcSec('subs', '🤝 Subcontractors', pcCount(sl.length,'sub','subs'), 'pc-sec-subs', totals.subsWithMarkup, subs, sl.length)}
         ${pcSec('vendors', '🚚 Vendors', pcCount(vl.length,'vendor','vendors'), 'pc-sec-vendors', totals.vendorsWithMarkup, vendors, vl.length)}
@@ -10703,6 +10763,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-n</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-o</div>
 </body>
 </html>
