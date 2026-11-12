@@ -42,6 +42,13 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-ser
 
 /* ---------- LOGIN ---------- */
 .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--brown);padding:20px;}
+@media print{
+  #v2-badge, #app-version, #net-banner, #ob-badge, [data-no-copy]{display:none !important;}
+  html, body{background:#fff !important;}
+  .login-wrap{min-height:0 !important;display:block !important;background:#fff !important;padding:0 !important;}
+  .login-card{box-shadow:none !important;border:0 !important;max-width:none !important;padding:0 !important;border-radius:0 !important;}
+  .legal-block{max-height:none !important;overflow:visible !important;}
+}
 .login-card{background:var(--white);border-radius:12px;padding:36px 34px;max-width:380px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,0.25);}
 .login-logo{width:150px;display:block;margin:0 auto 6px;}
 .login-title{text-align:center;font-family:'Oswald',sans-serif;font-size:15px;color:var(--brown-dark);letter-spacing:0.05em;margin-bottom:22px;}
@@ -272,7 +279,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.12-c';
+const APP_VERSION = 'v2.0-2026.11.12-d';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -1292,7 +1299,7 @@ function renderPublicChangeOrderBody(o){
           <div class="section-label">Signature — Captured</div>
           <img src="${o.signature}" style="border:1px solid var(--line);border-radius:6px;background:#fff;height:100px;">
           <div class="subtle">Signed ${fmtDateTime(o.signedAt)}</div>
-          <div style="text-align:center;margin-top:16px;"><button class="btn" data-action="public-print">Print / Save This Copy</button></div>
+          ${publicCopyButtonsHTML()}
         ` : `
           <div class="field chk" style="margin-top:14px;"><input type="checkbox" id="public-read-confirm"> I have read this change order and agree to the change and the price adjustment</div>
           <div class="section-label">Your Signature</div>
@@ -1303,7 +1310,7 @@ function renderPublicChangeOrderBody(o){
       </div>
     </div>`;
   if(!alreadySigned) bindSignatureChooser();
-  document.querySelectorAll('[data-action="public-print"]').forEach(el=>el.addEventListener('click', ()=> window.print()));
+  if(alreadySigned) bindPublicCopyButtons('Change Order — GSB General Construction', 'GSB Change Order - '+(o.clientName||'')+' - '+String(o.signedAt||'').slice(0,10));
   document.querySelectorAll('[data-action="public-submit-co-sign"]').forEach(el=>el.addEventListener('click', async ()=>{
     const confirmed = document.getElementById('public-read-confirm');
     const errEl = document.getElementById('public-sign-error');
@@ -1329,6 +1336,63 @@ function renderPublicChangeOrderBody(o){
     }
   }));
 }
+
+/* ---- Client's "Print / Save" after signing a link ----
+   Many clients open the link inside their email app (Gmail, Outlook…). Those built-in browsers often ignore the print
+   command, which made the old button look dead. Now: Print is tried first; if nothing opens, the client gets clear
+   help, and "Download a Copy" always works (saves / shares a file of the signed document). */
+function publicCopyButtonsHTML(){
+  return `<div data-no-copy style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:16px;">
+      <button class="btn" data-action="public-print">🖨 Print / Save as PDF</button>
+      <button class="btn ghost" data-action="public-download">⬇ Download a Copy</button>
+    </div>
+    <div id="public-print-help" class="banner-note" data-no-copy style="display:none;margin-top:10px;text-align:left;"></div>
+    <div class="subtle" data-no-copy style="text-align:center;margin-top:8px;">You can come back to this same link anytime to view or print your signed copy.</div>`;
+}
+function publicCopyHTML(title){
+  const card = document.querySelector('.login-card');
+  if(!card) return null;
+  const copy = card.cloneNode(true);
+  copy.querySelectorAll('[data-no-copy], button, canvas, input, textarea, script').forEach(n=>n.remove());
+  const styles = Array.prototype.map.call(document.querySelectorAll('style'), st=>st.outerHTML).join('');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>${styles}
+    <style>body{background:#fff;margin:0;} .login-wrap{min-height:0;background:#fff;align-items:flex-start;} .login-card{box-shadow:none;max-width:760px;}</style></head>
+    <body><div class="login-wrap">${copy.outerHTML}</div></body></html>`;
+}
+function bindPublicCopyButtons(title, fileBase){
+  const help = (msg)=>{ const h = document.getElementById('public-print-help'); if(h){ h.innerHTML = msg; h.style.display = 'block'; } };
+  document.querySelectorAll('[data-action="public-print"]').forEach(el=>el.addEventListener('click', ()=>{
+    let opened = false;
+    const mark = ()=>{ opened = true; };
+    window.addEventListener('beforeprint', mark);
+    try{ window.print(); }catch(e){}
+    setTimeout(()=>{
+      window.removeEventListener('beforeprint', mark);
+      if(!opened) help('<b>Printing isn\'t available in this app\'s built-in browser.</b><br>Tap <b>⬇ Download a Copy</b> to save it, or open this page in Safari or Chrome (tap the <b>•••</b> or share button → <b>Open in Browser</b>) and tap Print again.');
+    }, 1500);
+  }));
+  document.querySelectorAll('[data-action="public-download"]').forEach(el=>el.addEventListener('click', async ()=>{
+    const html = publicCopyHTML(title);
+    if(!html){ help('Could not make a copy. Please call GSB General Construction at 954-605-4746 and we will email you one.'); return; }
+    const name = String(fileBase||'GSB document').replace(/[\\/:*?"<>|]+/g,'').trim() + '.html';
+    const blob = new Blob([html], {type:'text/html'});
+    const touch = (navigator.maxTouchPoints||0) > 0;
+    try{
+      if(touch && typeof File!=='undefined' && navigator.canShare){
+        const file = new File([blob], name, {type:'text/html'});
+        if(navigator.canShare({files:[file]})){ await navigator.share({files:[file], title}); return; }
+      }
+    }catch(e){ if(e && e.name==='AbortError') return; }
+    try{
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 60000);
+      help('✓ Your copy was downloaded (<b>'+esc(name)+'</b>). Open it anytime to view or print it.');
+    }catch(e){
+      help('Could not download here. Open this page in Safari or Chrome (tap the <b>•••</b> or share button → <b>Open in Browser</b>) and try again, or call us at 954-605-4746 and we will email you a copy.');
+    }
+  }));
+}
 function publicEstimateCardHTML(e, alreadySigned){
   return `
     <div class="login-wrap" style="align-items:flex-start;padding:20px 14px;">
@@ -1337,9 +1401,7 @@ function publicEstimateCardHTML(e, alreadySigned){
         ${estimateDocHTML(e)}
         ${alreadySigned ? `
           <div class="subtle" style="margin-top:10px;">Signed ${fmtDateTime(e.signedAt)}${e.signedOnPaper?' (on paper)':''}</div>
-          <div style="text-align:center;margin-top:16px;">
-            <button class="btn" data-action="public-print">Print / Save This Copy</button>
-          </div>
+          ${publicCopyButtonsHTML()}
         ` : `
           <div class="section-label">Your Signature</div>
           ${signatureChooserHTML()}
@@ -1356,7 +1418,7 @@ function renderPublicEstimateSignBody(e){
   const alreadySigned = !!e.signedAt;
   app.innerHTML = publicEstimateCardHTML(e, alreadySigned);
   if(!alreadySigned) bindSignatureChooser();
-  document.querySelectorAll('[data-action="public-print"]').forEach(el=>el.addEventListener('click', ()=> window.print()));
+  if(alreadySigned) bindPublicCopyButtons('Project Estimate — GSB General Construction', 'GSB Estimate - '+(e.clientName||'')+' - '+String(e.signedAt||'').slice(0,10));
   document.querySelectorAll('[data-action="public-submit-estimate-sign"]').forEach(el=>el.addEventListener('click', async ()=>{
     const errEl = document.getElementById('public-sign-error');
     errEl.textContent = 'Submitting…';
@@ -1401,9 +1463,7 @@ function renderPublicSignBody(c){
           <div class="section-label">${c.signedOnPaper?'Signed on Paper':'Signature — Captured'}</div>
           ${c.signature ? `<img src="${c.signature}" style="border:1px solid var(--line);border-radius:6px;background:#fff;height:100px;">` : ''}
           <div class="subtle">Signed ${fmtDateTime(c.signedAt)}${c.signedOnPaper?' — a signed paper copy is on file with GSB General Construction Inc.':''}</div>
-          <div style="text-align:center;margin-top:16px;">
-            <button class="btn" data-action="public-print">Print / Save This Copy</button>
-          </div>
+          ${publicCopyButtonsHTML()}
         ` : `
           <div class="field chk" style="margin-top:14px;"><input type="checkbox" id="public-read-confirm"> I have read this entire document and agree to its terms</div>
           <div class="section-label">Your Signature</div>
@@ -1416,7 +1476,7 @@ function renderPublicSignBody(c){
       </div>
     </div>`;
   if(!alreadySigned) bindSignatureChooser();
-  document.querySelectorAll('[data-action="public-print"]').forEach(el=>el.addEventListener('click', ()=> window.print()));
+  if(alreadySigned) bindPublicCopyButtons('Construction Contract — GSB General Construction', 'GSB Contract - '+(c.clientName||'')+' - '+String(c.signedAt||'').slice(0,10));
   document.querySelectorAll('[data-action="public-submit-sign"]').forEach(el=>el.addEventListener('click', async ()=>{
     const confirmed = document.getElementById('public-read-confirm');
     const errEl = document.getElementById('public-sign-error');
@@ -8235,6 +8295,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-c</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-d</div>
 </body>
 </html>
