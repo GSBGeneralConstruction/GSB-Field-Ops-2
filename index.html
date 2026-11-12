@@ -169,6 +169,21 @@ h1.page-title{font-family:'Oswald',sans-serif;font-size:25px;margin:0 0 4px;lett
 .lock-banner{display:flex;align-items:center;gap:10px;border-radius:7px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;}
 .lock-banner.editable{background:#FDF3E3;color:var(--amber);border:1px solid #EAD6A8;}
 .lock-banner.locked{background:#EFEBE0;color:var(--ink);border:1px solid var(--line);}
+.pj-more{margin-top:16px;border:1px solid var(--line);border-radius:8px;background:#FBFAF6;}
+.pj-more > summary{list-style:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:11px 14px;cursor:pointer;font-weight:600;font-size:13.5px;}
+.pj-more > summary::-webkit-details-marker{display:none;}
+.pj-more > summary::after{content:'Show ▾';margin-left:auto;font-size:12px;color:var(--brown,#7A6A45);font-weight:600;}
+.pj-more[open] > summary::after{content:'Hide ▴';}
+.pj-more-meta{font-weight:500;font-size:12.5px;color:var(--muted);}
+.pj-more-body{padding:0 14px 14px;background:#fff;border-top:1px solid var(--line);border-radius:0 0 8px 8px;}
+.quick-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:18px 0 6px;}
+.quick-btn{display:flex;align-items:center;gap:12px;padding:16px 18px;border-radius:12px;border:1px solid var(--line);background:#fff;cursor:pointer;text-align:left;font:inherit;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.05);}
+.quick-btn .qi{font-size:26px;line-height:1;}
+.quick-btn b{display:block;font-size:15px;}
+.quick-btn span.qs{display:block;font-size:12.5px;color:var(--muted);margin-top:2px;}
+.quick-btn.main{background:var(--brown,#7A6A45);border-color:var(--brown,#7A6A45);color:#fff;}
+.quick-btn.main span.qs{color:rgba(255,255,255,.8);}
+.ws-num{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--brown,#7A6A45);color:#fff;font-size:11px;margin-right:7px;vertical-align:1px;letter-spacing:0;}
 .lock-banner svg{width:18px;height:18px;flex:none;}
 
 /* progress bar */
@@ -280,7 +295,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.12-o';
+const APP_VERSION = 'v2.0-2026.11.12-p';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -1109,7 +1124,7 @@ setInterval(()=>{ try{ if(STATE.user && STATE.view==='onsite' && STATE.subtab.on
 function draftsPanelHTML(){
   const list = [...DB.onsiteDrafts].sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));
   const checkRow = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;"><button class="btn ghost small" data-action="pull-now">☁️ Check for worksheets saved on other devices</button><span id="pull-status" class="subtle" style="font-size:12px;">${esc((STATE.pullStatus||'')+(STATE.pullTime?' · checked '+STATE.pullTime.toLocaleTimeString([], {hour:'numeric',minute:'2-digit',second:'2-digit'}):''))}</span></div>`;
-  if(!list.length) return `<div id="drafts-panel" class="card" style="margin-bottom:14px;background:#FFFBEF;border:1px solid #EAD6A8;"><div class="section-label" style="margin-top:0;">Saved Drafts (0)</div><div class="subtle">Nothing saved on this device yet.</div>${checkRow}</div>`;
+  if(!list.length) return `<div id="drafts-panel" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;border:1px dashed #EAD6A8;border-radius:8px;background:#FFFBEF;"><span class="subtle" style="margin:0;font-size:13px;">💾 No saved drafts on this device.</span>${checkRow.replace('margin-top:8px;','margin-top:0;')}</div>`;
   return `<div id="drafts-panel" class="card" style="margin-bottom:14px;background:#FFFBEF;border:1px solid #EAD6A8;">
     <div class="section-label" style="margin-top:0;">Saved Drafts (${list.length})</div>
     ${list.map(d=>`<div class="list-row" style="padding:8px 0;"><div class="main"><div class="pname">${esc(d.clientName||'(no name yet)')}${d.jobName?' — '+esc(d.jobName):''} ${d.id===STATE.newDraftId?'<span class="tag reviewed">Open now</span>':''} ${d.floorPlan?'<span class="tag category">✏️ has sketch</span>':'<span class="tag pending">no sketch</span>'}</div><div class="meta">Saved ${fmtDateTime(d.savedAt)}${d.deviceName?' on the '+esc(d.deviceName):''}${d.propertyAddress?' · '+esc(d.propertyAddress):''}</div></div>
@@ -6384,10 +6399,16 @@ function saveSketchAndClose(){
 }
 
 /* ================= RENDER SHELL ================= */
+/* older or half-saved records can be missing a list — give them an empty one so no page breaks (fills gaps only, never changes data) */
+function normalizeDB(){
+  (DB.clients||[]).forEach(c=>{ if(!c) return; if(!Array.isArray(c.projects)) c.projects = []; c.projects.forEach(pr=>{ if(pr && !Array.isArray(pr.warrantyNotes)) pr.warrantyNotes = []; }); });
+  (DB.onsite||[]).forEach(f=>{ if(!f) return; if(!Array.isArray(f.subs)) f.subs = []; if(!Array.isArray(f.flags)) f.flags = []; });
+}
 function render(){
   const app = document.getElementById('app');
   if(!STATE.loaded){ app.innerHTML = `<div class="boot-screen"><div class="boot-spinner"></div><div class="name">GSB Field Ops 2.0</div><div id="boot-status">${STATE.bootMsg||'Starting up…'}</div></div>`; return; }
   if(!STATE.user){ app.innerHTML = renderLogin(); attachLoginHandlers(); app.dataset.rendered = '1'; return; }
+  normalizeDB();
   const p = perms();
   try{
   const _nav = navBarsHTML();
@@ -6742,6 +6763,11 @@ function renderHome(){
       <div class="tag">13311 SW 9th Pl, Davie, FL 33325 · 954-605-4746 · Lic #CGC1539336</div>
       <div style="margin-top:10px;"><button class="btn ghost small" data-action="open-sync-check">🔄 Check sync</button></div>
     </div>
+    ${(()=>{ const pages = new Set(navGroups().flatMap(g=>g.pages.map(x=>x[0]))), q = [];
+      if(pages.has('onsite') && p.onsiteSubmit) q.push(`<button class="quick-btn main" data-quick="onsite:new"><span class="qi">📝</span><span><b>Start a worksheet</b><span class="qs">On-site walkthrough for a job</span></span></button>`);
+      if(pages.has('onsite') && p.onsiteReview) q.push(`<button class="quick-btn" data-quick="onsite:review"><span class="qi">📋</span><span><b>Review queue${pendingCount ? ' ('+pendingCount+')' : ''}</b><span class="qs">${pendingCount ? pendingCount+' worksheet'+(pendingCount===1?'':'s')+' waiting' : 'Worksheets to price'}</span></span></button>`);
+      if(pages.has('today')) q.push(`<button class="quick-btn" data-quick="today"><span class="qi">☀️</span><span><b>Today</b><span class="qs">What's on your plate</span></span></button>`);
+      return q.length ? `<div class="quick-row">${q.join('')}</div>` : ''; })()}
     ${sections}
   `;
 }
@@ -6962,7 +6988,7 @@ function onsiteFormView(){
   return `
     ${draftsPanelHTML()}
     <div class="card">
-      <div class="section-label">Job Info</div>
+      <div class="section-label"><span class="ws-num">1</span>Job Info</div>
       <div class="field"><label>Returning Client? Select Them Here</label>
         <select id="os-pick-client">
           <option value="">— New Client / Type Below —</option>
@@ -6993,32 +7019,32 @@ function onsiteFormView(){
         <div class="field"><label>Notes</label><textarea id="os-nc-notes"></textarea></div>
       </div>
 
-      <div class="section-label">Scope Walkthrough Notes</div>
+      <div class="section-label"><span class="ws-num">2</span>Scope Walkthrough Notes</div>
       <div class="field"><label>Demolition</label><textarea id="os-demo"></textarea></div>
       <div class="field"><label>Construction & Installation</label><textarea id="os-constr"></textarea></div>
       <div class="field"><label>Electrical & Plumbing</label><textarea id="os-ep"></textarea></div>
       <div class="field"><label>Rough Measurements</label><textarea id="os-measure"></textarea></div>
 
-      <div class="section-label">Subcontractors / Vendors Needed</div>
+      <div class="section-label"><span class="ws-num">3</span>Subcontractors / Vendors Needed</div>
       <div class="checklist">${SUB_OPTIONS.map(s=>`<label class="chk"><input type="checkbox" data-sub="${s}"> ${s}</label>`).join('')}</div>
 
-      <div class="section-label">Site Notes & Flags</div>
+      <div class="section-label"><span class="ws-num">4</span>Site Notes & Flags</div>
       <div class="checklist">${FLAG_OPTIONS.map(f=>`<label class="chk"><input type="checkbox" data-flag="${f}"> ${f}</label>`).join('')}</div>
 
-      <div class="section-label">Owner-Supplied Items</div>
+      <div class="section-label"><span class="ws-num">5</span>Owner-Supplied Items</div>
       <div class="field"><textarea id="os-owner"></textarea></div>
-      <div class="section-label">Follow-Up / Next Steps</div>
+      <div class="section-label"><span class="ws-num">6</span>Follow-Up / Next Steps</div>
       <div class="field"><textarea id="os-followup"></textarea></div>
 
-      <div class="section-label">Floor Plan Sketch</div>
+      <div class="section-label"><span class="ws-num">7</span>Floor Plan Sketch</div>
       <div id="new-floorplan-preview"></div>
       <button type="button" class="add-photo-btn" data-action="add-new-floorplan" style="margin-top:8px;">✏️ Sketch a Quick Floor Plan</button>
 
-      <div class="section-label">Floor Plan Files — Old &amp; New</div>
+      <div class="section-label"><span class="ws-num">8</span>Floor Plan Files — Old &amp; New</div>
       <div class="subtle" style="margin-bottom:8px;">Upload the existing (old) plan and the new plan — pictures or PDFs — so both stay on record with this job.</div>
       <div id="new-planfiles"></div>
 
-      <div class="section-label">Before Photos</div>
+      <div class="section-label"><span class="ws-num">9</span>Before Photos</div>
       <div class="subtle" style="margin-bottom:6px;">Take them here, or take them with your phone (better camera) and upload them.</div>
       <div class="photo-grid" id="new-before-photo-grid"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
@@ -7028,7 +7054,7 @@ function onsiteFormView(){
       <input type="file" id="before-photo-input" accept="image/*" capture="environment" multiple style="display:none;">
       <input type="file" id="before-photo-upload" accept="image/*" multiple style="display:none;">
 
-      <div class="section-label">Site Photos</div>
+      <div class="section-label"><span class="ws-num">10</span>Site Photos</div>
       <div class="photo-grid" id="new-photo-grid"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
         <button type="button" class="add-photo-btn" id="add-photo-btn">📷 Take Photo</button>
@@ -7163,7 +7189,10 @@ function onsiteReviewView(){
 function onsiteDetailView(f){
   const linkedEstimate = DB.estimates.find(e=>e.onsiteId===f.id);
   return `
-    <button class="btn ghost small" style="margin-bottom:14px;" data-action="back-review">← Back to Review Queue</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      <button class="btn ghost small" data-action="back-review">← Back to Review Queue</button>
+      ${`<button class="${linkedEstimate?'btn ghost':'btn'}" data-action="open-pricing-calculator-onsite" data-id="${f.id}">🧮 ${(f.pricingBreakdown && ((f.pricingBreakdown.materialLines||[]).length || (f.pricingBreakdown.subLines||[]).length || (f.pricingBreakdown.vendorLines||[]).length || parseFloat(f.pricingBreakdown.laborHours))) ? 'Open Saved Calculation' : 'Open Pricing Calculator'}</button>`}
+    </div>
     ${lockBanner(f)}
     <div class="detail-panel">
       <div class="modal-head">
@@ -8920,7 +8949,7 @@ function renderClients(){
   if(STATE.activeClientId){ const c = DB.clients.find(x=>x.id===STATE.activeClientId); if(c) return clientDetailView(c); }
   const clients = [...DB.clients].sort((a,b)=>a.name.localeCompare(b.name));
   return `
-    <div class="section-head"><div><h1 class="page-title">Clients</h1><div class="subtle" style="margin-bottom:0">${clients.length} clients on file</div></div></div>
+    <div class="section-head"><div><h1 class="page-title">Clients</h1><div class="subtle" style="margin-bottom:0">${clients.length} client${clients.length===1?'':'s'} on file</div></div></div>
     <button class="btn" style="margin-bottom:12px;" data-action="add-new-client">+ Add New Client</button>
     <div class="card" style="padding:8px 20px;">
       ${clients.map(c=>{
@@ -8997,7 +9026,12 @@ function projectCardHTML(c, pr, opts){
         ${pr.warrantyNotes.map(w=>`<div class="notes-block" style="margin-bottom:6px;">${fmtDate(w.date)} — ${esc(w.note)}</div>`).join('')}` : ''}
       ${pr.completed && p.stageToggle ? `<button class="btn ghost small" style="margin-top:10px;" data-action="add-warranty" data-cid="${c.id}" data-pid="${pr.id}">+ Log Warranty / Follow-Up Visit</button>` : ''}
 
-      <div class="section-label" style="margin-top:16px;">Floor Plans — Old &amp; New</div>
+      ${(()=>{ const nB = (pr.beforePhotos||[]).length, nA = (pr.afterPhotos||[]).length, nP = (pr.permits||[]).length, ins = pr.inspections||[];
+        const next = ins.map(i=>i.date).filter(d=>d && d >= todayStr()).sort()[0];
+        const bits = [nB+nA ? (nB+nA)+' photo'+(nB+nA===1?'':'s') : '', nP ? nP+' permit'+(nP===1?'':'s') : '', ins.length ? ins.length+' inspection'+(ins.length===1?'':'s')+(next ? ' (next '+fmtDate(next)+')' : '') : ''].filter(Boolean);
+        const open = !!(STATE.pjOpen && STATE.pjOpen[pr.id]);
+        return `<details class="pj-more" data-pjkey="${pr.id}" ${open?'open':''}><summary><span>📁 Floor plans, photos, permits &amp; inspections</span><span class="pj-more-meta">${bits.join(' · ') || 'Nothing added yet'}</span></summary><div class="pj-more-body">`; })()}
+      <div class="section-label" style="margin-top:6px;">Floor Plans — Old &amp; New</div>
       ${planFilesSectionHTML(projectPlanFiles(pr), {editable:true, attrs:`data-owner="project" data-cid="${c.id}" data-pid="${pr.id}"`})}
       <div class="section-label" style="margin-top:16px;">Before Photos</div>
       ${(pr.beforePhotos && pr.beforePhotos.length) ? `<div class="photo-grid">${pr.beforePhotos.map(pm=>stagePhotoCardHTML(pm, `data-cid="${c.id}" data-pid="${pr.id}" data-field="beforePhotos"`)).join('')}</div>` : `<span class="subtle">No before photos yet</span>`}
@@ -9018,6 +9052,7 @@ function projectCardHTML(c, pr, opts){
         <div class="notes-block" style="margin-bottom:6px;">${fmtDate(ins.date)} at ${esc(ins.time)}${ins.note ? ' — '+esc(ins.note) : ''}</div>
       `).join('') : `<span class="subtle">No inspections scheduled</span>`}
       ${p.stageToggle ? `<button class="btn ghost small" style="margin-top:10px;" data-action="add-inspection" data-cid="${c.id}" data-pid="${pr.id}">+ Add Inspection Date</button>` : ''}
+      </div></details>
     </div>`;
 }
 
@@ -9088,7 +9123,7 @@ function renderTeam(){
   const p = perms();
   const team = [...DB.team].sort((a,b)=> a.first.localeCompare(b.first));
   return `
-    <div class="section-head"><div><h1 class="page-title">Team</h1><div class="subtle" style="margin-bottom:0">${team.length} people have app access</div></div>
+    <div class="section-head"><div><h1 class="page-title">Team</h1><div class="subtle" style="margin-bottom:0">${team.length} ${team.length===1?'person has':'people have'} app access</div></div>
       <div style="display:flex;gap:8px;">${p.manageRoles ? `<button class="btn ghost" data-nav="roles">Roles & Permissions</button>` : ''}${p.manageTeam ? `<button class="btn" data-action="add-team">+ Add Worker</button>` : ''}</div></div>
     <div class="card" style="padding:8px 20px;">
       ${team.map(t=>`
@@ -9530,6 +9565,8 @@ function warrantyForm(cid,pid){
 /* ================= EVENTS ================= */
 function attachHandlers(){
   document.querySelectorAll('[data-nav]').forEach(el=>el.addEventListener('click', ()=>{ wsMirrorWrite(); const _changed = STATE.view!==el.dataset.nav; STATE.view=el.dataset.nav; STATE.activeSketchProjectId=null; STATE.activeOnsiteId=null; STATE.activeClientId=null; STATE.notifOpen=false; render(); if(_changed) window.scrollTo(0,0); }));
+  document.querySelectorAll('details[data-pjkey]').forEach(d=>d.addEventListener('toggle', ()=>{ (STATE.pjOpen || (STATE.pjOpen = {}))[d.dataset.pjkey] = d.open; }));
+  document.querySelectorAll('[data-quick]').forEach(el=>el.addEventListener('click', ()=>{ wsMirrorWrite(); const [v, sub] = el.dataset.quick.split(':'); STATE.view = v; if(sub) STATE.subtab[v] = sub; STATE.activeSketchProjectId=null; STATE.activeOnsiteId=null; STATE.activeClientId=null; STATE.notifOpen=false; render(); window.scrollTo(0,0); }));
   document.querySelectorAll('[data-subtab]').forEach(el=>el.addEventListener('click', ()=>{ wsMirrorWrite(); setTimeout(pullFromCloud, 300); const [g,k]=el.dataset.subtab.split(':'); STATE.subtab[g]=k; STATE.activeOnsiteId=null; render(); }));
   bindClick('logout', ()=>{ STATE.user=null; STATE.view='home'; render(); });
   bindClick('toggle-notif', ()=>{ STATE.notifOpen=!STATE.notifOpen; DB.notifications.forEach(n=>n.read=true); render(); });
@@ -10763,6 +10800,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-o</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-p</div>
 </body>
 </html>
