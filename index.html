@@ -280,7 +280,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.12-l';
+const APP_VERSION = 'v2.0-2026.11.12-m';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -7801,6 +7801,11 @@ function refreshPricingCalculatorTotals(pb){
   setText('pc-gt-finishes', money(totals.finishesTotal));
   setText('pc-gt-tax', money(totals.taxAmount));
   setText('pc-gt-total', money(totals.grandTotal));
+  setText('pc-bar-total', money(totals.grandTotal));
+  setText('pc-sec-materials', money(totals.materialsWithMarkup)); setText('pc-sec-labor', money(totals.laborTotal));
+  setText('pc-sec-subs', money(totals.subsWithMarkup)); setText('pc-sec-vendors', money(totals.vendorsWithMarkup));
+  setText('pc-sec-permit', money(totals.licenseFee + totals.inspectionsTotal)); setText('pc-sec-finishes', money(totals.finishesTotal)); setText('pc-sec-tax', money(totals.taxAmount));
+  [['pc-gt-materials',totals.materialsWithMarkup],['pc-gt-labor',totals.laborTotal],['pc-gt-subs',totals.subsWithMarkup],['pc-gt-vendors',totals.vendorsWithMarkup],['pc-gt-license',totals.licenseFee],['pc-gt-inspections',totals.inspectionsTotal],['pc-gt-finishes',totals.finishesTotal],['pc-gt-tax',totals.taxAmount]].forEach(([id,v])=>{ const el = document.getElementById(id); if(el && el.parentElement) el.parentElement.classList.toggle('zero', !v); });
 }
 const LABOR_FLAT_NOTE = 'Flat-fee work is priced as a total and is an estimate only. This estimate is subject to final pricing — it is our best idea of what the project will cost, and the actual cost may be different.';
 const FINISHES_NOTE = 'Finishes are priced as a flat total and are an estimate only. This estimate is subject to final pricing — it is our best idea of what the project will cost, and the actual cost may be different.';
@@ -7817,153 +7822,225 @@ function renderPricingCalculatorPage(){
   return `
     <button class="btn ghost small" style="margin-bottom:14px;" data-action="close-calculator">← Back to Worksheet</button>
     <h1 class="page-title">Pricing Calculator</h1>
-    <div class="subtle" style="margin-bottom:8px;">${esc(f.clientName||'')}${f.jobName?' — '+esc(f.jobName):''} · <span id="pc-save-status-top">Auto-saves as you type</span></div>
-    <div class="subtle">${esc(f.clientName)} — ${esc(f.propertyAddress)}</div>
+    <div class="subtle">${esc(f.clientName||'')}${f.jobName?' — '+esc(f.jobName):''}${f.propertyAddress?' · '+esc(f.propertyAddress):''} · <span id="pc-save-status-top">Auto-saves as you type</span></div>
     <div style="display:flex;gap:6px;margin:12px 0 4px;">
       <button type="button" class="btn ${(STATE.pcView==='customer'||STATE.pcView==='link')?'ghost ':''}small" data-pricing-action="pc-view" data-view="edit">✏️ Calculator</button>
       <button type="button" class="btn ${STATE.pcView==='customer'?'':'ghost '}small" data-pricing-action="pc-view" data-view="customer">👁 Customer View</button>
       <button type="button" class="btn ${STATE.pcView==='link'?'':'ghost '}small" data-pricing-action="pc-view" data-view="link">📧 Email Link View</button>
     </div>
-    ${STATE.pcView==='customer' ? customerViewHTML(f, pb) : STATE.pcView==='link' ? linkViewHTML(f, pb) : `
-    <datalist id="store-list">${storeSuggestions().map(x=>`<option value="${esc(x)}">`).join('')}</datalist>
-    <div class="section-label">Materials</div>
-    <div class="field" style="max-width:300px;margin-bottom:10px;"><label>Materials Markup (%) — added on top of all the materials below</label><input type="number" data-pricing-action="set-materials-markup" value="${pb.materialsMarkupPct||0}" placeholder="e.g. 30"></div>
-    ${(pb.materialLines||[]).map(line=>{
-      const lineTotal = (parseFloat(line.unitPrice)||0)*(parseFloat(line.qty)||0);
-      return `<div class="list-row">
-        <div class="main">
-          <button type="button" class="btn small" data-matpick="${line.id}" style="margin-bottom:6px;">🖼️ Search &amp; pick with pictures</button>
-          <input type="search" data-mat-search="${line.id}" placeholder="🔍 Search materials — type e.g. 5/8 drywall, stud, screws" autocomplete="off" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--line);border-radius:5px;margin-bottom:6px;">
-          <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;">${matThumbHTML(DB.materials.find(x=>x.id===line.materialId), 38)}
-          <select id="matsel-${line.id}" data-pricing-action="set-material" data-line="${line.id}" style="flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:5px;">${matOptionsHTML(line.materialId,'')}
-          </select></div>
-          ${(()=>{ const mm = DB.materials.find(x=>x.id===line.materialId); const nm = mm ? (mm.name + (mm.size?' '+mm.size:'')) : (line.customName||''); return nm ? `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;"><span style="flex:1;min-width:0;font-weight:600;font-size:13.5px;user-select:text;-webkit-user-select:text;">${esc(nm)}</span><button type="button" class="btn ghost small" data-copy="${esc(nm)}">📋 Copy name</button></div>` : ''; })()}
-          <div style="margin-bottom:6px;"><input type="text" list="store-list" data-pricing-action="set-material-store" data-line="${line.id}" value="${esc(line.store||'')}" placeholder="🛒 Where will you buy it? (e.g. Home Depot) — for us only, not on the estimate" autocomplete="off" style="width:100%;box-sizing:border-box;padding:7px;border:1px dashed var(--line);border-radius:5px;"></div>
-          ${(line.customName!==undefined) ? `<input type="text" data-pricing-action="set-material-custom-name" data-line="${line.id}" value="${esc(line.customName||'')}" placeholder="Name of the item (not in the list)" style="width:100%;box-sizing:border-box;padding:7px;border:1px solid var(--line);border-radius:5px;margin-bottom:6px;">` : (!line.materialId ? `<button type="button" class="btn ghost small" data-pricing-action="start-custom-name" data-line="${line.id}" style="margin-bottom:6px;">✏️ Not in the list? Type a name</button>` : '')}
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <select data-pricing-action="set-unit-type" data-line="${line.id}" title="How this item is priced" style="padding:7px;border:1px solid var(--line);border-radius:5px;">${Object.keys(UNIT_TYPES).map(u=>`<option value="${u}" ${(line.unitType||'each')===u?'selected':''}>${UNIT_TYPES[u].label}</option>`).join('')}</select>
-            <input type="number" step="0.01" data-pricing-action="set-material-price" data-line="${line.id}" value="${line.unitPrice||''}" placeholder="Price per ${UNIT_TYPES[line.unitType||'each'].short} ($)" style="width:140px;padding:7px;border:1px solid var(--line);border-radius:5px;">
-            <input type="number" data-pricing-action="set-qty" data-line="${line.id}" value="${line.qty||''}" placeholder="${(line.unitType||'each')==='each'?'Qty':'Total '+line.unitType}" style="width:100px;padding:7px;border:1px solid var(--line);border-radius:5px;">
-            <span class="subtle">= <b id="pc-line-total-${line.id}">${money(lineTotal)}</b></span>
-          </div>
-        </div>
-        <button class="btn ghost small" data-pricing-action="remove-material-line" data-line="${line.id}">Remove</button>
-      </div>`;
-    }).join('') || `<div class="subtle" style="margin-bottom:8px;">No materials added yet.</div>`}
-    <div style="display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;">
-      <button class="btn ghost small" data-pricing-action="add-material-line">+ Add Material Line</button>
+    ${STATE.pcView==='customer' ? customerViewHTML(f, pb) : STATE.pcView==='link' ? linkViewHTML(f, pb) : pcEditorHTML(f, pb, totals, subVendors, pureVendors)}`;
+}
+/* ---- the calculator, organized: one card per part (tap a heading to open / close it), totals always in view ---- */
+const PC_CSS = `<style>
+  .pc-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start;margin-top:12px;}
+  .pc-side{position:sticky;top:12px;}
+  .pc-bar{display:none;}
+  .pc-sec{background:#fff;border:1px solid var(--line);border-radius:10px;margin-bottom:10px;overflow:hidden;}
+  .pc-sec > summary{list-style:none;display:flex;align-items:center;gap:10px;padding:13px 14px;cursor:pointer;user-select:none;-webkit-user-select:none;}
+  .pc-sec > summary::-webkit-details-marker{display:none;}
+  .pc-sec > summary::before{content:'▸';color:var(--muted);font-size:13px;width:10px;transition:transform .15s;}
+  .pc-sec[open] > summary::before{transform:rotate(90deg);}
+  .pc-sec[open] > summary{border-bottom:1px solid var(--line);background:#FBFAF6;}
+  .pc-sec-t{font-family:'Oswald',sans-serif;font-size:16px;letter-spacing:.02em;}
+  .pc-sec-meta{font-size:12px;color:var(--muted);margin-right:auto;}
+  .pc-sec-sum{font-weight:700;font-size:15px;white-space:nowrap;}
+  .pc-sec-body{padding:12px 14px 14px;}
+  .pc-help{font-size:12.5px;color:var(--muted);margin:0 0 10px;line-height:1.45;}
+  .pc-in{padding:8px;border:1px solid var(--line);border-radius:6px;box-sizing:border-box;font:inherit;background:#fff;}
+  .pc-line{border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px;background:#fff;}
+  .pc-line-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .pc-line-name{flex:1;min-width:140px;font-weight:600;font-size:14px;user-select:text;-webkit-user-select:text;}
+  .pc-line-nums{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;}
+  .pc-line-tot{margin-left:auto;font-weight:700;white-space:nowrap;}
+  .pc-pick{background:#FBFAF6;border:1px dashed var(--line);border-radius:8px;padding:8px;margin-top:8px;}
+  .pc-store{width:100%;margin-top:8px;border-style:dashed !important;font-size:13px;}
+  .pc-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
+  .pc-x{padding:4px 9px !important;}
+  .pc-add{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 4px;}
+  .pc-foot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--muted);border-top:1px dashed var(--line);margin-top:10px;padding-top:9px;}
+  .pc-foot b{color:var(--ink);}
+  .pc-mini{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);}
+  .pc-mini input{width:76px;}
+  .pc-sub{font:600 11px 'Oswald',sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:12px 0 6px;}
+  .pc-sub:first-child{margin-top:0;}
+  .pc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}
+  .pc-grid label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;}
+  .pc-grid input{width:100%;}
+  .pc-total-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px;}
+  .pc-total-card h3{font-family:'Oswald',sans-serif;font-size:15px;margin:0 0 8px;letter-spacing:.03em;}
+  .pc-total-card table{width:100%;border-collapse:collapse;font-size:13px;}
+  .pc-total-card td{padding:5px 0;border-bottom:1px solid #F0ECE2;}
+  .pc-total-card td:last-child{text-align:right;white-space:nowrap;}
+  .pc-total-card tr.zero td{color:#B5AE9E;}
+  .pc-grand{display:flex;justify-content:space-between;align-items:baseline;margin-top:10px;padding-top:10px;border-top:2px solid var(--ink);}
+  .pc-grand span{font-family:'Oswald',sans-serif;font-size:14px;letter-spacing:.04em;}
+  .pc-grand b{font-size:24px;}
+  .pc-actions{display:flex;flex-direction:column;gap:8px;margin-top:14px;}
+  .pc-actions .btn{width:100%;justify-content:center;}
+  @media (max-width:900px){
+    .pc-layout{grid-template-columns:1fr;}
+    .pc-side{position:static;}
+    .pc-bar{display:flex;position:fixed;right:12px;bottom:calc(26px + env(safe-area-inset-bottom));z-index:40;align-items:center;gap:10px;background:#2A261E;color:#fff;border-radius:24px;padding:9px 16px;box-shadow:0 6px 18px rgba(0,0,0,.25);}
+    .pc-bar .l{font:600 11px 'Oswald',sans-serif;letter-spacing:.06em;opacity:.8;}
+    .pc-bar b{font-size:18px;}
+    .pc-layout{padding-bottom:60px;}
+    .pc-bar a{color:#fff;font-size:12.5px;text-decoration:underline;cursor:pointer;}
+  }
+</style>`;
+function pcSecOpen(key, hasContent){ const o = STATE.pcSecOpen || (STATE.pcSecOpen = {}); return (key in o) ? o[key] : (key==='materials' || !!hasContent); }
+function pcSec(key, title, meta, totalId, total, body, hasContent){
+  return `<details class="pc-sec" data-pcsec="${key}" ${pcSecOpen(key, hasContent) ? 'open' : ''}>
+    <summary><span class="pc-sec-t">${title}</span><span class="pc-sec-meta">${meta||''}</span><span class="pc-sec-sum" id="${totalId}">${money(total)}</span></summary>
+    <div class="pc-sec-body">${body}</div></details>`;
+}
+const pcCount = (n, one, many)=> n ? n+' '+(n===1?one:many) : '';
+function pcMaterialLineHTML(line){
+  const lineTotal = (parseFloat(line.unitPrice)||0)*(parseFloat(line.qty)||0);
+  const mm = DB.materials.find(x=>x.id===line.materialId);
+  const nm = mm ? (mm.name + (mm.size?' '+mm.size:'')) : (line.customName||'');
+  const editing = !nm || STATE.pcEditLine===line.id;
+  const ut = line.unitType||'each';
+  return `<div class="pc-line">
+    <div class="pc-line-top">
+      ${matThumbHTML(mm, 38)}
+      <div class="pc-line-name">${nm ? esc(nm) : '<span class="subtle" style="font-weight:500;">Pick an item below</span>'}</div>
+      ${nm ? `<button type="button" class="btn ghost small" data-copy="${esc(nm)}">📋 Copy name</button>` : ''}
+      ${nm && !editing ? `<button type="button" class="btn ghost small" data-pricing-action="pc-edit-line" data-line="${line.id}">Change item</button>` : ''}
+      <button type="button" class="btn ghost small pc-x" data-pricing-action="remove-material-line" data-line="${line.id}" title="Remove this line" aria-label="Remove">✕</button>
+    </div>
+    ${editing ? `<div class="pc-pick">
+      <div class="pc-row"><button type="button" class="btn small" data-matpick="${line.id}">🖼️ Search &amp; pick with pictures</button>
+        <input type="search" class="pc-in" data-mat-search="${line.id}" placeholder="🔍 Or type to search — e.g. 5/8 drywall, stud, screws" autocomplete="off" style="flex:1;min-width:180px;"></div>
+      <select id="matsel-${line.id}" class="pc-in" data-pricing-action="set-material" data-line="${line.id}" style="width:100%;">${matOptionsHTML(line.materialId,'')}</select>
+      ${(line.customName!==undefined) ? `<input type="text" class="pc-in" data-pricing-action="set-material-custom-name" data-line="${line.id}" value="${esc(line.customName||'')}" placeholder="Name of the item (not in the list)" style="width:100%;margin-top:6px;">`
+        : (!line.materialId ? `<button type="button" class="btn ghost small" data-pricing-action="start-custom-name" data-line="${line.id}" style="margin-top:6px;">✏️ Not in the list? Type a name</button>` : '')}
+      ${nm ? `<div style="margin-top:6px;"><button type="button" class="btn ghost small" data-pricing-action="pc-edit-line" data-line="">✓ Done</button></div>` : ''}
+    </div>` : ''}
+    <div class="pc-line-nums">
+      <select class="pc-in" data-pricing-action="set-unit-type" data-line="${line.id}" title="How this item is priced">${Object.keys(UNIT_TYPES).map(u=>`<option value="${u}" ${ut===u?'selected':''}>${UNIT_TYPES[u].label}</option>`).join('')}</select>
+      <input type="number" step="0.01" class="pc-in" data-pricing-action="set-material-price" data-line="${line.id}" value="${line.unitPrice||''}" placeholder="$ per ${UNIT_TYPES[ut].short}" style="width:120px;">
+      <span class="subtle">×</span>
+      <input type="number" class="pc-in" data-pricing-action="set-qty" data-line="${line.id}" value="${line.qty||''}" placeholder="${ut==='each'?'Qty':'Total '+ut}" style="width:96px;">
+      <span class="pc-line-tot">= <span id="pc-line-total-${line.id}">${money(lineTotal)}</span></span>
+    </div>
+    <input type="text" list="store-list" class="pc-in pc-store" data-pricing-action="set-material-store" data-line="${line.id}" value="${esc(line.store||'')}" placeholder="🛒 Where will you buy it? (e.g. Home Depot) — for us only, not on the estimate" autocomplete="off">
+  </div>`;
+}
+function pcPartyLineHTML(line, list, kind){
+  const word = kind==='sub' ? 'Subcontractor' : 'Vendor';
+  return `<div class="pc-row">
+    <select class="pc-in" data-pricing-action="set-${kind==='sub'?'sub':'vendor'}-vendor" data-line="${line.id}" style="flex:2;min-width:180px;">
+      <option value="">— Choose ${word} —</option>
+      ${list.map(v=>`<option value="${v.id}" ${line.vendorId===v.id?'selected':''}>${esc(v.name)}${v.company?' — '+esc(v.company):''}</option>`).join('')}
+    </select>
+    <input type="number" step="0.01" class="pc-in" data-pricing-action="set-${kind==='sub'?'sub':'vendor'}-price" data-line="${line.id}" value="${line.price||''}" placeholder="What they charge ($)" style="flex:1;min-width:130px;">
+    <button type="button" class="btn ghost small pc-x" data-pricing-action="remove-${kind==='sub'?'sub':'vendor'}-line" data-line="${line.id}" title="Remove" aria-label="Remove">✕</button>
+  </div>`;
+}
+function pcFlatLineHTML(line, kind, ph){
+  return `<div class="pc-row">
+    <input type="text" class="pc-in" data-pricing-action="set-${kind}-name" data-line="${line.id}" value="${esc(line.name||'')}" placeholder="${ph}" style="flex:2;min-width:180px;">
+    <input type="number" step="0.01" class="pc-in" data-pricing-action="set-${kind}-price" data-line="${line.id}" value="${line.price||''}" placeholder="Flat price ($)" style="flex:1;min-width:120px;">
+    <button type="button" class="btn ghost small pc-x" data-pricing-action="remove-${kind}-line" data-line="${line.id}" title="Remove" aria-label="Remove">✕</button>
+  </div>`;
+}
+function pcEditorHTML(f, pb, totals, subVendors, pureVendors){
+  const ml = pb.materialLines||[], lf = pb.laborFlatLines||[], sl = pb.subLines||[], vl = pb.vendorLines||[], fl = pb.finishLines||[];
+  const hasHourly = (parseFloat(pb.laborRate)||0) || (parseFloat(pb.laborHours)||0);
+  const mk = (action, v, label)=> `<label class="pc-mini">${label} <input type="number" class="pc-in" data-pricing-action="${action}" value="${v||0}" placeholder="0"> %</label>`;
+
+  const materials = `
+    <div class="pc-row" style="justify-content:space-between;"><p class="pc-help" style="margin:0;">Pick each item, then its price and how many.</p>${mk('set-materials-markup', pb.materialsMarkupPct, 'Markup')}</div>
+    ${ml.map(pcMaterialLineHTML).join('') || `<p class="pc-help">No materials added yet.</p>`}
+    <div class="pc-add">
+      <button class="btn small" data-pricing-action="add-material-line">+ Add Material</button>
       <button class="btn ghost small" data-pricing-action="add-new-material">+ Create New Material</button>
       <button class="btn ghost small" data-action="go-to-materials-page">📋 Manage Materials Catalog</button>
     </div>
+    <div class="pc-foot"><span>Materials <span id="pc-materials-base">${money(totals.materialsBase)}</span> + markup</span><span>With markup: <b id="pc-materials-markup">${money(totals.materialsWithMarkup)}</b></span></div>`;
 
-
-    <div class="subtle">Materials Subtotal: <span id="pc-materials-base">${money(totals.materialsBase)}</span> → With Markup: <b id="pc-materials-markup">${money(totals.materialsWithMarkup)}</b></div>
-
-    <div class="section-label">Labor</div>
-    <div class="subtle" style="margin-bottom:6px;">Labor always counts toward Construction & Installation.</div>
-    <div class="form-grid">
-      <div class="field"><label>Hourly Rate ($)</label><input type="number" data-pricing-action="set-labor-rate" value="${pb.laborRate||0}"></div>
-      <div class="field"><label>Estimated Hours</label><input type="number" data-pricing-action="set-labor-hours" value="${pb.laborHours||0}"></div>
+  const labor = `
+    <p class="pc-help">Labor always counts toward Construction &amp; Installation.</p>
+    <div class="pc-sub">By the hour</div>
+    <div class="pc-grid">
+      <div><label>Hourly rate ($)</label><input type="number" class="pc-in" data-pricing-action="set-labor-rate" value="${pb.laborRate||0}"></div>
+      <div><label>Estimated hours</label><input type="number" class="pc-in" data-pricing-action="set-labor-hours" value="${pb.laborHours||0}"></div>
+      <div><label>Hourly labor total</label><div style="padding:8px 0;font-weight:700;" id="pc-labor-total">${money(totals.laborHourly)}</div></div>
     </div>
-    <div class="subtle">Hourly Labor Total: <b id="pc-labor-total">${money(totals.laborHourly)}</b></div>
+    <div class="pc-sub">Flat-fee jobs</div>
+    <p class="pc-help">Some labor is one flat price instead of hours (for example: Baseboard install — $1,200, Door install — $450).</p>
+    ${lf.map(l=>pcFlatLineHTML(l, 'laborflat', 'What job? (e.g. Baseboard install, Door install)')).join('') || `<p class="pc-help">No flat-fee labor jobs added yet.</p>`}
+    <div class="pc-add"><button class="btn ghost small" data-pricing-action="add-laborflat-line">+ Add Flat-Fee Labor Job</button></div>
+    <div class="pc-foot"><span>Hourly + flat-fee jobs (<span id="pc-laborflat-total">${money(totals.laborFlatTotal)}</span> flat)</span><span>All labor: <b id="pc-labor-all">${money(totals.laborTotal)}</b></span></div>`;
 
-    <div class="section-label" style="font-size:13px;">Labor — flat-fee jobs</div>
-    <div class="subtle" style="margin-bottom:6px;">Some labor is one flat price instead of hours. Add each job with its own price (for example: Baseboard install — $1,200, Door install — $450).</div>
-    ${(pb.laborFlatLines||[]).map(line=>`<div class="list-row">
-        <div class="main"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <input type="text" data-pricing-action="set-laborflat-name" data-line="${line.id}" value="${esc(line.name||'')}" placeholder="What job? (e.g. Baseboard install, Door install)" style="flex:2;min-width:180px;padding:7px;border:1px solid var(--line);border-radius:5px;">
-          <input type="number" step="0.01" data-pricing-action="set-laborflat-price" data-line="${line.id}" value="${line.price||''}" placeholder="Flat price ($)" style="flex:1;min-width:120px;padding:7px;border:1px solid var(--line);border-radius:5px;">
-        </div></div>
-        <button class="btn ghost small" data-pricing-action="remove-laborflat-line" data-line="${line.id}">Remove</button>
-      </div>`).join('') || `<div class="subtle" style="margin-bottom:8px;">No flat-fee labor jobs added yet.</div>`}
-    <button class="btn ghost small" style="margin:10px 0;" data-pricing-action="add-laborflat-line">+ Add Flat-Fee Labor Job</button>
-    <div class="subtle">Flat-Fee Labor Total: <b id="pc-laborflat-total">${money(totals.laborFlatTotal)}</b> &nbsp;·&nbsp; All Labor: <b id="pc-labor-all">${money(totals.laborTotal)}</b></div>
+  const subs = `
+    <div class="pc-row" style="justify-content:space-between;"><p class="pc-help" style="margin:0;">Who's doing part of the job, and what they charge us.</p>${mk('set-subs-markup', pb.subsMarkupPct, 'Markup')}</div>
+    ${sl.map(l=>pcPartyLineHTML(l, subVendors, 'sub')).join('') || `<p class="pc-help">No subcontractors added yet.</p>`}
+    <div class="pc-add"><button class="btn ghost small" data-pricing-action="add-sub-line">+ Add Subcontractor</button></div>
+    <div class="pc-foot"><span>Subs <span id="pc-subs-base">${money(totals.subsBase)}</span> + markup</span><span>With markup: <b id="pc-subs-markup">${money(totals.subsWithMarkup)}</b></span></div>`;
 
-    <div class="section-label">Subcontractors</div>
-    ${(pb.subLines||[]).map(line=>{
-      return `<div class="list-row">
-        <div class="main">
-          <select data-pricing-action="set-sub-vendor" data-line="${line.id}" style="width:100%;margin-bottom:6px;padding:8px;border:1px solid var(--line);border-radius:5px;">
-            <option value="">— Choose Subcontractor —</option>
-            ${subVendors.map(sv=>`<option value="${sv.id}" ${line.vendorId===sv.id?'selected':''}>${esc(sv.name)}${sv.company?' — '+esc(sv.company):''}</option>`).join('')}
-          </select>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <input type="number" step="0.01" data-pricing-action="set-sub-price" data-line="${line.id}" value="${line.price||''}" placeholder="How much are they charging? ($)" style="flex:1;min-width:160px;padding:7px;border:1px solid var(--line);border-radius:5px;">
+  const vendors = `
+    <div class="pc-row" style="justify-content:space-between;"><p class="pc-help" style="margin:0;">Suppliers and services we pay (dumpster, rentals, deliveries…).</p>${mk('set-vendors-markup', pb.vendorsMarkupPct, 'Markup')}</div>
+    ${vl.map(l=>pcPartyLineHTML(l, pureVendors, 'vendor')).join('') || `<p class="pc-help">No vendors added yet.</p>`}
+    <div class="pc-add"><button class="btn ghost small" data-pricing-action="add-vendor-line">+ Add Vendor</button></div>
+    <div class="pc-foot"><span>Vendors <span id="pc-vendors-base">${money(totals.vendorsBase)}</span> + markup</span><span>With markup: <b id="pc-vendors-markup">${money(totals.vendorsWithMarkup)}</b></span></div>`;
+
+  const permit = `
+    <p class="pc-help">The license fee is a flat fee — change it any time for this job. Inspections are charged per inspection (for the days lost waiting on inspectors).</p>
+    <div class="pc-grid">
+      <div><label>License flat fee ($)</label><input type="number" step="0.01" class="pc-in" data-pricing-action="set-license-fee" value="${pb.licenseFee}"></div>
+      <div><label>Number of inspections</label><input type="number" min="0" class="pc-in" data-pricing-action="set-inspection-count" value="${pb.inspectionCount||''}" placeholder="0"></div>
+      <div><label>Charge per inspection ($)</label><input type="number" step="0.01" class="pc-in" data-pricing-action="set-inspection-rate" value="${pb.inspectionRate}"></div>
+    </div>
+    <div class="pc-foot"><span>Inspections: <b id="pc-inspections-total">${money(totals.inspectionsTotal)}</b></span><span>License: <b>${money(totals.licenseFee)}</b></span></div>`;
+
+  const finishes = `
+    <p class="pc-help">Finishing work is usually one total price, not by the hour (for example: Tile — $3,500, Paint — $1,800).</p>
+    ${fl.map(l=>pcFlatLineHTML(l, 'finish', 'What finish? (e.g. Tile, Paint, Flooring)')).join('') || `<p class="pc-help">No finishes added yet.</p>`}
+    <div class="pc-add"><button class="btn ghost small" data-pricing-action="add-finish-line">+ Add Finish</button></div>
+    <div class="pc-foot"><span>Finishes total</span><b id="pc-finishes-total">${money(totals.finishesTotal)}</b></div>
+    <div class="banner-note" style="margin-top:8px;">${FINISHES_NOTE}</div>`;
+
+  const tax = `
+    <div class="pc-grid"><div><label>Tax (%) — applied to the whole project</label><input type="number" class="pc-in" data-pricing-action="set-tax-pct" value="${pb.taxPct||0}"></div></div>`;
+
+  const row = (label, id, v)=> `<tr class="${v ? '' : 'zero'}"><td>${label}</td><td id="${id}">${money(v)}</td></tr>`;
+  return `${PC_CSS}
+    <datalist id="store-list">${storeSuggestions().map(x=>`<option value="${esc(x)}">`).join('')}</datalist>
+    <div class="pc-bar"><span class="l">TOTAL</span><b id="pc-bar-total">${money(totals.grandTotal)}</b><a data-pc-jump="1">Breakdown ↓</a></div>
+    <div class="pc-layout">
+      <div>
+        ${pcSec('materials', '🧱 Materials', pcCount(ml.length,'item','items'), 'pc-sec-materials', totals.materialsWithMarkup, materials, ml.length)}
+        ${pcSec('labor', '👷 Labor', [hasHourly ? (parseFloat(pb.laborHours)||0)+' hrs' : '', pcCount(lf.length,'flat job','flat jobs')].filter(Boolean).join(' · '), 'pc-sec-labor', totals.laborTotal, labor, hasHourly || lf.length)}
+        ${pcSec('subs', '🤝 Subcontractors', pcCount(sl.length,'sub','subs'), 'pc-sec-subs', totals.subsWithMarkup, subs, sl.length)}
+        ${pcSec('vendors', '🚚 Vendors', pcCount(vl.length,'vendor','vendors'), 'pc-sec-vendors', totals.vendorsWithMarkup, vendors, vl.length)}
+        ${pcSec('permit', '📋 License &amp; Inspections', (parseFloat(pb.inspectionCount)||0) ? pcCount(parseFloat(pb.inspectionCount)||0,'inspection','inspections') : '', 'pc-sec-permit', totals.licenseFee + totals.inspectionsTotal, permit, false)}
+        ${pcSec('finishes', '🎨 Finishes (flat fees)', pcCount(fl.length,'finish','finishes'), 'pc-sec-finishes', totals.finishesTotal, finishes, fl.length)}
+        ${pcSec('tax', '🧾 Tax', (parseFloat(pb.taxPct)||0) ? (parseFloat(pb.taxPct)||0)+'%' : '', 'pc-sec-tax', totals.taxAmount, tax, false)}
+      </div>
+      <div class="pc-side" id="pc-side">
+        <div class="pc-total-card">
+          <h3>GRAND TOTAL</h3>
+          <table>
+            ${row('Materials (with markup)', 'pc-gt-materials', totals.materialsWithMarkup)}
+            ${row('Labor (hourly + flat-fee jobs)', 'pc-gt-labor', totals.laborTotal)}
+            ${row('Subcontractors (with markup)', 'pc-gt-subs', totals.subsWithMarkup)}
+            ${row('Vendors (with markup)', 'pc-gt-vendors', totals.vendorsWithMarkup)}
+            ${row('License (flat fee)', 'pc-gt-license', totals.licenseFee)}
+            ${row('Inspections', 'pc-gt-inspections', totals.inspectionsTotal)}
+            ${row('Finishes (flat fees)', 'pc-gt-finishes', totals.finishesTotal)}
+            ${row('Tax', 'pc-gt-tax', totals.taxAmount)}
+          </table>
+          <div class="pc-grand"><span>GRAND TOTAL</span><b id="pc-gt-total">${money(totals.grandTotal)}</b></div>
+          <div class="pc-actions">
+            <button class="btn" data-pricing-action="use-total">Save &amp; Build Estimate + Contract</button>
+            <button class="btn ghost" data-action="save-calculation">💾 Save Calculation</button>
+            <button class="btn ghost" data-action="close-calculator">Back to Worksheet</button>
           </div>
+          <div class="subtle" style="font-size:12px;margin-top:8px;text-align:center;"><span id="pc-save-status">${pcSavedText(pb)}</span><br>Everything you enter saves automatically to this job.</div>
         </div>
-        <button class="btn ghost small" data-pricing-action="remove-sub-line" data-line="${line.id}">Remove</button>
-      </div>`;
-    }).join('') || `<div class="subtle" style="margin-bottom:8px;">No subcontractors added yet.</div>`}
-    <button class="btn ghost small" style="margin:10px 0;" data-pricing-action="add-sub-line">+ Add Subcontractor</button>
-    <div class="field" style="max-width:220px;"><label>Subcontractor Markup (%)</label><input type="number" data-pricing-action="set-subs-markup" value="${pb.subsMarkupPct||0}"></div>
-    <div class="subtle">Subs Subtotal: <span id="pc-subs-base">${money(totals.subsBase)}</span> → With Markup: <b id="pc-subs-markup">${money(totals.subsWithMarkup)}</b></div>
-
-    <div class="section-label">Vendors</div>
-    ${(pb.vendorLines||[]).map(line=>{
-      return `<div class="list-row">
-        <div class="main">
-          <select data-pricing-action="set-vendor-vendor" data-line="${line.id}" style="width:100%;margin-bottom:6px;padding:8px;border:1px solid var(--line);border-radius:5px;">
-            <option value="">— Choose Vendor —</option>
-            ${pureVendors.map(pv=>`<option value="${pv.id}" ${line.vendorId===pv.id?'selected':''}>${esc(pv.name)}${pv.company?' — '+esc(pv.company):''}</option>`).join('')}
-          </select>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <input type="number" step="0.01" data-pricing-action="set-vendor-price" data-line="${line.id}" value="${line.price||''}" placeholder="How much are they charging? ($)" style="flex:1;min-width:160px;padding:7px;border:1px solid var(--line);border-radius:5px;">
-          </div>
-        </div>
-        <button class="btn ghost small" data-pricing-action="remove-vendor-line" data-line="${line.id}">Remove</button>
-      </div>`;
-    }).join('') || `<div class="subtle" style="margin-bottom:8px;">No vendors added yet.</div>`}
-    <button class="btn ghost small" style="margin:10px 0;" data-pricing-action="add-vendor-line">+ Add Vendor</button>
-    <div class="field" style="max-width:220px;"><label>Vendor Markup (%)</label><input type="number" data-pricing-action="set-vendors-markup" value="${pb.vendorsMarkupPct||0}"></div>
-    <div class="subtle">Vendors Subtotal: <span id="pc-vendors-base">${money(totals.vendorsBase)}</span> → With Markup: <b id="pc-vendors-markup">${money(totals.vendorsWithMarkup)}</b></div>
-
-    <div class="section-label">License & Inspections</div>
-    <div class="subtle" style="margin-bottom:6px;">The license fee is a flat fee — change it any time for this job. Inspections are charged per inspection (for the days lost waiting on inspectors).</div>
-    <div class="form-grid">
-      <div class="field"><label>License Flat Fee ($)</label><input type="number" step="0.01" data-pricing-action="set-license-fee" value="${pb.licenseFee}"></div>
-      <div class="field"><label>Number of Inspections</label><input type="number" min="0" data-pricing-action="set-inspection-count" value="${pb.inspectionCount||''}" placeholder="0"></div>
-      <div class="field"><label>Charge Per Inspection ($)</label><input type="number" step="0.01" data-pricing-action="set-inspection-rate" value="${pb.inspectionRate}"></div>
-    </div>
-    <div class="subtle">Inspections Total: <b id="pc-inspections-total">${money(totals.inspectionsTotal)}</b></div>
-
-    <div class="section-label">Finishes (flat fees)</div>
-    <div class="subtle" style="margin-bottom:6px;">Finishing work is usually one total price, not by the hour. Add each finish as a line with its own flat price (for example: Tile — $3,500, Paint — $1,800).</div>
-    ${(pb.finishLines||[]).map(line=>`<div class="list-row">
-        <div class="main"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <input type="text" data-pricing-action="set-finish-name" data-line="${line.id}" value="${esc(line.name||'')}" placeholder="What finish? (e.g. Tile, Paint, Flooring)" style="flex:2;min-width:180px;padding:7px;border:1px solid var(--line);border-radius:5px;">
-          <input type="number" step="0.01" data-pricing-action="set-finish-price" data-line="${line.id}" value="${line.price||''}" placeholder="Flat price ($)" style="flex:1;min-width:120px;padding:7px;border:1px solid var(--line);border-radius:5px;">
-        </div></div>
-        <button class="btn ghost small" data-pricing-action="remove-finish-line" data-line="${line.id}">Remove</button>
-      </div>`).join('') || `<div class="subtle" style="margin-bottom:8px;">No finishes added yet.</div>`}
-    <button class="btn ghost small" style="margin:10px 0;" data-pricing-action="add-finish-line">+ Add Finish</button>
-    <div class="subtle">Finishes Total: <b id="pc-finishes-total">${money(totals.finishesTotal)}</b></div>
-    <div class="banner-note" style="margin-top:8px;">${FINISHES_NOTE}</div>
-
-    <div class="section-label">Tax</div>
-    <div class="field" style="max-width:220px;"><label>Tax (%) — applied to the whole project</label><input type="number" data-pricing-action="set-tax-pct" value="${pb.taxPct||0}"></div>
-
-    <div class="section-label">Grand Total</div>
-    <div class="card">
-    <table class="hist">
-      <tr><td>Materials (with markup)</td><td style="text-align:right;" id="pc-gt-materials">${money(totals.materialsWithMarkup)}</td></tr>
-      <tr><td>Labor (hourly + flat-fee jobs)</td><td style="text-align:right;" id="pc-gt-labor">${money(totals.laborTotal)}</td></tr>
-      <tr><td>Subcontractors (with markup)</td><td style="text-align:right;" id="pc-gt-subs">${money(totals.subsWithMarkup)}</td></tr>
-      <tr><td>Vendors (with markup)</td><td style="text-align:right;" id="pc-gt-vendors">${money(totals.vendorsWithMarkup)}</td></tr>
-      <tr><td>License (flat fee)</td><td style="text-align:right;" id="pc-gt-license">${money(totals.licenseFee)}</td></tr>
-      <tr><td>Inspections</td><td style="text-align:right;" id="pc-gt-inspections">${money(totals.inspectionsTotal)}</td></tr>
-      <tr><td>Finishes (flat fees)</td><td style="text-align:right;" id="pc-gt-finishes">${money(totals.finishesTotal)}</td></tr>
-      <tr><td>Tax</td><td style="text-align:right;" id="pc-gt-tax">${money(totals.taxAmount)}</td></tr>
-      <tr><td><b>Grand Total</b></td><td style="text-align:right;"><b id="pc-gt-total">${money(totals.grandTotal)}</b></td></tr>
-    </table>
-    </div>
-
-    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
-      <span id="pc-save-status" class="subtle" style="margin-right:auto;align-self:center;">${pcSavedText(pb)}</span>
-      <button class="btn ghost" data-action="close-calculator">Back to Worksheet</button>
-      <button class="btn ghost" data-action="save-calculation">💾 Save Calculation</button>
-      <button class="btn" data-pricing-action="use-total">Save & Build Estimate + Contract</button>
-    </div>
-    <div class="subtle" style="text-align:right;margin-top:6px;">Everything you enter here saves automatically to this job.</div>`}`;
+      </div>
+    </div>`;
 }
 function estimateFromWorksheet(f, pb){
   const pv = pbEstimatePreview(pb);
@@ -8184,7 +8261,7 @@ function openMatPicker(lineId, target){
     const ff = DB.onsite.find(x=>x.id===STATE.pricingCalcOnsiteId);
     const cur = ff && ff.pricingBreakdown && ((isMeasure ? ff.pricingBreakdown.measureLines : ff.pricingBreakdown.materialLines)||[]).find(l=>l.id===lineId);
     if(!cur){ try{ showToast('Could not find that line — please add it again.'); }catch(e){} close(); return; }
-    cur.materialId = p.dataset.mppick;
+    cur.materialId = p.dataset.mppick; STATE.pcEditLine = null;
     const pm = DB.materials.find(x=>x.id===cur.materialId);
     cur.unitType = guessUnitType(pm); if(cur.customName!==undefined) delete cur.customName;
     close();
@@ -9634,6 +9711,8 @@ Office@gsbconstructions.com`);
   bindClick('open-sync-check', ()=>{ runSyncCheck(); });
   bindClick('close-calculator', async ()=>{ if(_pcDirty) await savePricingNow(false); STATE.pricingCalcOnsiteId = null; STATE.pcView = 'edit'; render(); });
   bindClick('save-calculation', async ()=>{ await savePricingNow(true); });
+  document.querySelectorAll('details[data-pcsec]').forEach(d=>d.addEventListener('toggle', ()=>{ (STATE.pcSecOpen || (STATE.pcSecOpen = {}))[d.dataset.pcsec] = d.open; }));
+  document.querySelectorAll('[data-pc-jump]').forEach(a=>a.addEventListener('click', ()=>{ const t = document.getElementById('pc-side'); if(t) t.scrollIntoView({behavior:'smooth', block:'start'}); }));
   document.querySelectorAll('[data-pricing-action]').forEach(el=>{
     const eventName = (el.tagName==='SELECT') ? 'change' : ((el.tagName==='INPUT'||el.tagName==='TEXTAREA') ? 'input' : 'click');
     el.addEventListener(eventName, async ()=>{
@@ -9643,11 +9722,12 @@ Office@gsbconstructions.com`);
       if(!f.pricingBreakdown) f.pricingBreakdown = defaultPricingBreakdown();
       const pb = ensurePricingDefaults(f.pricingBreakdown);
       const lineId = el.dataset.line;
+      if(action==='pc-edit-line'){ STATE.pcEditLine = lineId || null; render(); return; }
       if(action!=='use-total' && action!=='pc-view') schedulePricingAutosave();
       // structural changes (add/remove rows, pick a different item) rebuild the page
       if(action==='add-material-line'){ const nid = uid(); pb.materialLines.push({ id:nid, materialId:'', unitPrice:'', qty:'' }); render(); setTimeout(()=>openMatPicker(nid), 30); return; }
       if(action==='remove-material-line'){ pb.materialLines = pb.materialLines.filter(l=>l.id!==lineId); render(); return; }
-      if(action==='set-material'){ const line=pb.materialLines.find(l=>l.id===lineId); if(line){ line.materialId = el.value; } render(); return; }
+      if(action==='set-material'){ const line=pb.materialLines.find(l=>l.id===lineId); if(line){ line.materialId = el.value; } STATE.pcEditLine = null; render(); return; }
       if(action==='add-sub-line'){ pb.subLines.push({ id:uid(), vendorId:'', price:'' }); render(); return; }
       if(action==='remove-sub-line'){ pb.subLines = pb.subLines.filter(l=>l.id!==lineId); render(); return; }
       if(action==='set-sub-vendor'){ const line=pb.subLines.find(l=>l.id===lineId); if(line) line.vendorId = el.value; render(); return; }
@@ -10526,6 +10606,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-l</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-m</div>
 </body>
 </html>
