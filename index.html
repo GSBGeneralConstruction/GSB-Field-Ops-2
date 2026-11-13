@@ -169,6 +169,22 @@ h1.page-title{font-family:'Oswald',sans-serif;font-size:25px;margin:0 0 4px;lett
 .lock-banner{display:flex;align-items:center;gap:10px;border-radius:7px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;}
 .lock-banner.editable{background:#FDF3E3;color:var(--amber);border:1px solid #EAD6A8;}
 .lock-banner.locked{background:#EFEBE0;color:var(--ink);border:1px solid var(--line);}
+body.jobsite #net-banner{display:none !important;}
+.js-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:calc(10px + env(safe-area-inset-top)) 14px 10px;background:#7A6A45;color:#fff;}
+.js-brand{font:600 17px 'Oswald',sans-serif;letter-spacing:.03em;margin-right:auto;}
+.js-user{font-size:13px;opacity:.85;}
+.js-top .btn.ghost{background:rgba(255,255,255,.14);color:#fff;border-color:rgba(255,255,255,.4);}
+.js-online{background:#E9F4EC;border-bottom:1px solid #CFE3D4;color:#2E5C3A;padding:9px 14px;font-size:13.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.js-wrap{max-width:900px;margin:0 auto;padding:16px 14px 80px;}
+.js-new{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:22px;border-radius:12px;border:0;background:#7A6A45;color:#fff;font:600 19px Inter,sans-serif;cursor:pointer;margin-bottom:6px;}
+.js-new span{font-size:26px;line-height:1;}
+.js-bar{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-bottom:12px;position:sticky;top:0;z-index:5;background:var(--bg,#FAF8F3);padding:6px 0;}
+.js-sketch{border:1px solid var(--line);border-radius:8px;background:#fff;padding:6px;margin-bottom:10px;max-width:520px;}
+.js-sketch img{width:100%;display:block;}
+.assoc-co{background:#FBFAF6;border:1px solid var(--line);border-radius:8px;padding:10px 14px;font-size:13.5px;line-height:1.55;margin-bottom:10px;}
+.assoc-plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-top:12px;}
+.assoc-plans .card{margin:0;}
+.assoc-img{width:100%;display:block;border:1px solid var(--line);border-radius:6px;background:#fff;}
 .lost-reasons{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px;}
 .lost-reason{display:flex;align-items:center;gap:8px;padding:11px 12px;border:1px solid var(--line);border-radius:8px;cursor:pointer;font-size:14px;background:#fff;}
 .lost-reason:has(input:checked){border-color:var(--brown,#7A6A45);background:#FBF6EA;font-weight:600;}
@@ -312,7 +328,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.13-b';
+const APP_VERSION = 'v2.0-2026.11.13-c';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -360,7 +376,7 @@ const firebaseConfig = {
 };
 let fbAuth, fbDb;
 if(typeof firebase === 'undefined'){
-  document.getElementById('app').innerHTML = '<div class="loading">Could not load the Firebase library — check your internet connection, then reload this page.</div>';
+  document.getElementById('app').innerHTML = '<div class="loading">Could not load the Firebase library — check your internet connection, then reload this page.</div>';   // (Job Site Mode takes over below when it can)
 } else {
   const _fbApp = firebase.initializeApp(firebaseConfig, 'gsb-field-ops-2');   // named app = 2.0 keeps its own sign-in and offline copy on the device
   fbAuth = _fbApp.auth();
@@ -1856,6 +1872,192 @@ async function publicAutoCreateOrAttachClient(c){
   }catch(err){ console.error('publicAutoCreateOrAttachClient failed', err); }
 }
 
+/* ================= JOB SITE MODE =================
+   For the iPad with no signal: no cloud, no database loading — only the worksheet (scope notes) and the sketch.
+   Worksheets are kept in the iPad's own storage; back on Wi-Fi the full app sends them to the cloud
+   (they land in Saved Drafts on the laptop) and, once the cloud confirms, deletes the iPad copy to free the space. */
+const JS_FLAG = 'gsb2-jobsite-on', JS_USER = 'gsb2-jobsite-user', JS_LS = 'gsb2-jobsite-ws';
+function jsIdb(){
+  return new Promise((res, rej)=>{
+    try{ const r = indexedDB.open('gsb2-jobsite', 1);
+      r.onupgradeneeded = ()=>{ if(!r.result.objectStoreNames.contains('ws')) r.result.createObjectStore('ws', {keyPath:'id'}); };
+      r.onsuccess = ()=>res(r.result); r.onerror = ()=>rej(r.error); }catch(e){ rej(e); }
+  });
+}
+function jsLs(){ try{ return JSON.parse(localStorage.getItem(JS_LS)||'{}') || {}; }catch(e){ return {}; } }
+async function jsAll(){
+  let list = [];
+  try{ const db = await jsIdb(); list = await new Promise((res, rej)=>{ const q = db.transaction('ws').objectStore('ws').getAll(); q.onsuccess = ()=>res(q.result||[]); q.onerror = ()=>rej(q.error); }); }catch(e){}
+  const ls = jsLs(); Object.values(ls).forEach(r=>{ if(!list.some(x=>x.id===r.id)) list.push(r); });   // backup copies (only used if the iPad's database failed)
+  return list.sort((a,b)=>String(b.savedAt||'').localeCompare(String(a.savedAt||'')));
+}
+async function jsPut(rec){
+  rec.savedAt = nowISO();
+  try{ const db = await jsIdb(); await new Promise((res, rej)=>{ const tx = db.transaction('ws', 'readwrite'); tx.objectStore('ws').put(rec); tx.oncomplete = res; tx.onerror = ()=>rej(tx.error); tx.onabort = ()=>rej(tx.error); });
+    const ls = jsLs(); if(ls[rec.id]){ delete ls[rec.id]; try{ localStorage.setItem(JS_LS, JSON.stringify(ls)); }catch(e){} }
+    return true; }
+  catch(e){ try{ const ls = jsLs(); ls[rec.id] = rec; localStorage.setItem(JS_LS, JSON.stringify(ls)); return true; }catch(e2){ alert('⚠️ The iPad is out of storage space — this worksheet could not be saved. Free up space on the iPad, then try again.'); return false; } }
+}
+async function jsDel(id){
+  try{ const db = await jsIdb(); await new Promise((res, rej)=>{ const tx = db.transaction('ws', 'readwrite'); tx.objectStore('ws').delete(id); tx.oncomplete = res; tx.onerror = ()=>rej(tx.error); }); }catch(e){}
+  const ls = jsLs(); if(ls[id]){ delete ls[id]; try{ localStorage.setItem(JS_LS, JSON.stringify(ls)); }catch(e){} }
+}
+function jsKB(rec){ try{ return Math.max(1, Math.round(JSON.stringify(rec).length/1024)); }catch(e){ return 0; } }
+function jsCanStart(){ try{ const snap = JSON.parse(localStorage.getItem('gsb2-offline-snap')||'null'); return !!(snap && snap.team && snap.team.length); }catch(e){ return false; } }
+function jsWanted(){ try{ return localStorage.getItem(JS_FLAG)==='1' || navigator.onLine===false; }catch(e){ return navigator.onLine===false; } }
+function jobsiteBoot(remember){
+  STATE.jobsite = true; STATE.loaded = true; STATE.view = 'jobsite';
+  try{ document.body.classList.add('jobsite'); }catch(e){}
+  if(remember){ try{ localStorage.setItem(JS_FLAG, '1'); }catch(e){} }
+  if(!DB.team || !DB.team.length){
+    try{ const snap = JSON.parse(localStorage.getItem('gsb2-offline-snap')||'null'); if(snap){ DB.team = snap.team||[]; DB.roles = snap.roles||DB.roles||[]; } }catch(e){}
+  }
+  if(!STATE.user){ try{ const uidSaved = localStorage.getItem(JS_USER); const u = uidSaved && (DB.team||[]).find(t=>t.id===uidSaved); if(u) STATE.user = u; }catch(e){} }
+  STATE.jsList = null; jsAll().then(l=>{ STATE.jsList = l; render(); }).catch(()=>{ STATE.jsList = []; render(); });
+  render();
+}
+function jsLeave(){
+  if(navigator.onLine===false && !confirm('There is no signal right now. The full app will open from what this iPad saved last time, and can be slow without signal.\n\nGo to the full app anyway?')) return;
+  try{ localStorage.removeItem(JS_FLAG); }catch(e){}
+  location.reload();
+}
+const jsVal = (id)=>{ const x = document.getElementById(id); return x ? x.value : ''; };
+function jsCollect(){
+  return { date: jsVal('js-date'), clientName: jsVal('js-clientName').trim(), jobName: jsVal('js-jobName').trim(), propertyAddress: jsVal('js-address').trim(), phone: jsVal('js-phone').trim(),
+    propType: jsVal('js-propType'), age: jsVal('js-age').trim(), demo: jsVal('js-demo'), constr: jsVal('js-constr'), ep: jsVal('js-ep'), measure: jsVal('js-measure'),
+    subs: [...document.querySelectorAll('[data-js-sub]')].filter(c=>c.checked).map(c=>c.dataset.jsSub),
+    flags: [...document.querySelectorAll('[data-js-flag]')].filter(c=>c.checked).map(c=>c.dataset.jsFlag),
+    owner: jsVal('js-owner'), followup: jsVal('js-followup'), isNewClient: false, nc: {} };
+}
+function jsHasContent(rec){ const f = rec.form||{}; return !!(rec.floorPlan || f.clientName || f.jobName || f.propertyAddress || f.phone || f.demo || f.constr || f.ep || f.measure || f.owner || f.followup || (f.subs||[]).length || (f.flags||[]).length); }
+let _jsTimer = null;
+function jsPaintSaved(txt){ const el = document.getElementById('js-saved'); if(el) el.textContent = txt; }
+async function jsSaveNow(){
+  clearTimeout(_jsTimer); _jsTimer = null;
+  const rec = STATE.jsCur; if(!rec || !document.getElementById('js-clientName')) return;
+  rec.form = jsCollect();
+  if(!jsHasContent(rec)) return;
+  const ok = await jsPut(rec);
+  if(ok){ const i = (STATE.jsList||[]).findIndex(x=>x.id===rec.id); if(i>=0) STATE.jsList[i] = rec; else (STATE.jsList = STATE.jsList||[]).unshift(rec);
+    jsPaintSaved('✓ Saved on this iPad '+new Date().toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})); }
+}
+function jsScheduleSave(){ jsPaintSaved('Saving…'); clearTimeout(_jsTimer); _jsTimer = setTimeout(jsSaveNow, 700); }
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden && STATE.jobsite && STATE.jsCur) jsSaveNow(); });
+window.addEventListener('pagehide', ()=>{ if(STATE.jobsite && STATE.jsCur) jsSaveNow(); });
+
+function renderJobsite(){
+  const app = document.getElementById('app');
+  if(!STATE.user){
+    app.innerHTML = `<div class="login-wrap"><div class="login-card">
+      <img class="login-logo" src="${LOGO}">
+      <div class="login-title">📴 Job Site Mode</div>
+      <div class="subtle" style="margin-bottom:14px;text-align:center;">No signal needed — worksheet + sketch only. Everything saves on this iPad.</div>
+      ${(DB.team||[]).length ? `<div class="field"><label>First Name</label><input id="lg-first" placeholder="First name"></div>
+      <div class="field"><label>Last Name</label><input id="lg-last" placeholder="Last name"></div>
+      <div class="field"><label>Your Code</label><input id="lg-code" type="password" placeholder="4-digit code" maxlength="6"></div>
+      <button class="login-btn" data-js="login">Log In</button>
+      <div id="lg-err" class="login-err"></div>` : `<div class="banner-note">This iPad hasn't been set up yet. Open the app once <b>with internet</b> and log in — after that Job Site Mode works with no signal.</div>`}
+      <div style="text-align:center;margin-top:14px;"><button class="btn ghost small" data-js="leave">🏠 Open the full app instead</button></div>
+    </div></div>`;
+    jsBind(); return;
+  }
+  const list = STATE.jsList;
+  const head = `<div class="js-top"><div class="js-brand">📴 Job Site Mode</div><div class="js-user">${esc(STATE.user.first)}</div>
+      <button class="btn ghost small" data-js="leave">🏠 Full app</button><button class="btn ghost small" data-js="logout">Log out</button></div>
+    ${navigator.onLine ? `<div class="js-online">📶 You have signal. <button class="btn small" data-js="leave">Go to the full app</button> — your job-site worksheets get sent to the cloud automatically.</div>` : ''}`;
+  if(!STATE.jsCur){
+    app.innerHTML = `${head}<div class="js-wrap">
+      <button class="js-new" data-js="new"><span>＋</span> New Worksheet</button>
+      <div class="section-label">Saved on this iPad ${list ? '('+list.length+')' : ''}</div>
+      ${list===null ? '<div class="subtle">Loading…</div>' : !list.length ? '<div class="card subtle">Nothing saved yet. Tap “New Worksheet” to start.</div>' :
+        `<div class="card" style="padding:6px 18px;">${list.map(r=>{ const f = r.form||{}; return `<div class="list-row">
+          <div class="main"><b>${esc(f.clientName||'(no name yet)')}</b>${f.jobName?` <span style="color:var(--muted);font-size:13px"> — ${esc(f.jobName)}</span>`:''} ${r.floorPlan?'<span class="tag category">✏️ Sketch</span>':''}
+            <div class="meta">${esc(f.propertyAddress||'')}${f.propertyAddress?' · ':''}Saved ${fmtDateTime(r.savedAt)} · ${jsKB(r)} KB</div></div>
+          <div style="display:flex;gap:6px;"><button class="btn small" data-js="open" data-id="${r.id}">Open</button><button class="btn ghost small" data-js="del" data-id="${r.id}">Delete</button></div></div>`; }).join('')}</div>
+        <div class="subtle" style="font-size:12.5px;margin-top:8px;">These stay on this iPad until you're back on Wi-Fi. Then open the full app — they go to the cloud (Saved Drafts on the laptop) and are cleared off the iPad to free up space.</div>`}
+    </div>`;
+    jsBind(); return;
+  }
+  const r = STATE.jsCur, f = r.form||{}, v = (k)=> esc(f[k]||'');
+  const ta = (id, label, k, ph)=> `<div class="field"><label>${label}</label><textarea id="${id}" rows="3" placeholder="${ph||''}">${v(k)}</textarea></div>`;
+  app.innerHTML = `${head}<div class="js-wrap">
+    <div class="js-bar"><button class="btn ghost small" data-js="back">← All worksheets</button><span id="js-saved" class="subtle" style="font-size:12.5px;">${jsHasContent(r) ? '✓ Saved on this iPad' : 'Saves on this iPad as you type'}</span><button class="btn small" data-js="save">💾 Save</button></div>
+    <div class="card" id="js-form">
+      <div class="section-label"><span class="ws-num">1</span>Job Info</div>
+      <div class="form-grid">
+        <div class="field"><label>Client Name</label><input id="js-clientName" value="${v('clientName')}" placeholder="Client name"></div>
+        <div class="field"><label>Job Name</label><input id="js-jobName" value="${v('jobName')}" placeholder="e.g. Kitchen Remodel"></div>
+        <div class="field"><label>Property Address</label><input id="js-address" value="${v('propertyAddress')}"></div>
+        <div class="field"><label>Phone</label><input id="js-phone" value="${v('phone')}" inputmode="tel"></div>
+        <div class="field"><label>Date</label><input id="js-date" type="date" value="${esc(f.date||todayStr())}"></div>
+        <div class="field"><label>Property Type</label><select id="js-propType">${['Single Family','Condo','Commercial'].map(o=>`<option ${f.propType===o?'selected':''}>${o}</option>`).join('')}</select></div>
+        <div class="field"><label>Approx. Age of Structure</label><input id="js-age" value="${v('age')}"></div>
+      </div>
+      <div class="section-label"><span class="ws-num">2</span>Floor Plan Sketch</div>
+      ${r.floorPlan && r.floorPlan.snapshot ? `<div class="js-sketch"><img src="${r.floorPlan.snapshot}"></div>` : '<div class="subtle" style="margin-bottom:8px;">No sketch yet.</div>'}
+      <button class="btn" data-js="sketch">✏️ ${r.floorPlan ? 'Open the sketch' : 'Draw the floor plan'} (Bluetooth tape works here)</button>
+      <div class="section-label"><span class="ws-num">3</span>Scope of Work</div>
+      ${ta('js-demo','Demolition','demo','One item per line')}${ta('js-constr','Construction & Installation','constr','One item per line')}${ta('js-ep','Electrical & Plumbing','ep','One item per line')}${ta('js-measure','Rough Measurements','measure')}
+      <div class="section-label"><span class="ws-num">4</span>Subcontractors / Vendors Needed</div>
+      <div class="checklist">${SUB_OPTIONS.map(x=>`<label class="chk"><input type="checkbox" data-js-sub="${esc(x)}" ${(f.subs||[]).includes(x)?'checked':''}> ${esc(x)}</label>`).join('')}</div>
+      <div class="section-label"><span class="ws-num">5</span>Site Notes &amp; Flags</div>
+      <div class="checklist">${FLAG_OPTIONS.map(x=>`<label class="chk"><input type="checkbox" data-js-flag="${esc(x)}" ${(f.flags||[]).includes(x)?'checked':''}> ${esc(x)}</label>`).join('')}</div>
+      <div class="section-label"><span class="ws-num">6</span>Owner-Supplied Items</div>
+      <div class="field"><textarea id="js-owner" rows="2">${v('owner')}</textarea></div>
+      <div class="section-label"><span class="ws-num">7</span>Follow-Up / Next Steps</div>
+      <div class="field"><textarea id="js-followup" rows="2">${v('followup')}</textarea></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;"><button class="btn ghost" data-js="back">← All worksheets</button><button class="btn" data-js="save">💾 Save</button></div>
+    </div>
+  </div>`;
+  jsBind();
+  const form = document.getElementById('js-form');
+  if(form){ form.addEventListener('input', jsScheduleSave); form.addEventListener('change', jsScheduleSave); }
+}
+function jsBind(){
+  document.querySelectorAll('[data-js]').forEach(el=>el.addEventListener('click', async (ev)=>{
+    const a = el.dataset.js;
+    if(a==='login'){
+      const first = jsVal('lg-first').trim().toLowerCase(), last = jsVal('lg-last').trim().toLowerCase(), code = jsVal('lg-code').trim();
+      const m = (DB.team||[]).find(t=>String(t.first).toLowerCase()===first && String(t.last).toLowerCase()===last && t.code===code);
+      if(!m){ const e = document.getElementById('lg-err'); if(e) e.textContent = 'Name or code not recognized.'; return; }
+      STATE.user = m; try{ localStorage.setItem(JS_USER, m.id); }catch(e){} render(); return;
+    }
+    if(a==='leave'){ if(STATE.jsCur) await jsSaveNow(); jsLeave(); return; }
+    if(a==='logout'){ if(STATE.jsCur) await jsSaveNow(); STATE.user = null; STATE.jsCur = null; try{ localStorage.removeItem(JS_USER); }catch(e){} render(); return; }
+    if(a==='new'){ STATE.jsCur = { id: uid(), createdAt: nowISO(), savedBy: STATE.user.first+' '+STATE.user.last, form: { date: todayStr(), subs:[], flags:[] }, floorPlan: null }; render(); window.scrollTo(0,0); return; }
+    if(a==='open'){ const r = (STATE.jsList||[]).find(x=>x.id===el.dataset.id); if(r){ STATE.jsCur = JSON.parse(JSON.stringify(r)); render(); window.scrollTo(0,0); } return; }
+    if(a==='del'){ const r = (STATE.jsList||[]).find(x=>x.id===el.dataset.id); if(!r) return;
+      if(!confirm('Delete the worksheet for '+((r.form||{}).clientName||'(no name)')+' from this iPad? It has NOT been sent to the cloud yet.')) return;
+      await jsDel(r.id); STATE.jsList = STATE.jsList.filter(x=>x.id!==r.id); render(); return; }
+    if(a==='back'){ await jsSaveNow(); STATE.jsCur = null; render(); window.scrollTo(0,0); return; }
+    if(a==='save'){ const rec = STATE.jsCur; rec.form = jsCollect(); if(!jsHasContent(rec)){ alert('Nothing to save yet — fill in something first.'); return; } await jsSaveNow(); showToast('✓ Saved on this iPad'); return; }
+    if(a==='sketch'){
+      const rec = STATE.jsCur; rec.form = jsCollect();
+      openSketchEditor(rec.floorPlan, false, async (data)=>{ rec.floorPlan = data; rec.form = rec.form || {}; await jsPut(rec);
+        const i = (STATE.jsList||[]).findIndex(x=>x.id===rec.id); if(i>=0) STATE.jsList[i] = rec; else (STATE.jsList = STATE.jsList||[]).unshift(rec);
+        render(); showToast('✓ Sketch saved on this iPad'); }, {kind:'jobsite', id:rec.id});
+      return;
+    }
+  }));
+}
+/* back home: the full app sends the iPad's job-site worksheets to the cloud, then clears them off the iPad */
+async function jsUploadAll(){
+  if(STATE.jobsite || STATE._jsUploading || !navigator.onLine) return;
+  let list = []; try{ list = await jsAll(); }catch(e){ return; }
+  if(!list.length) return;
+  STATE._jsUploading = true; let sent = 0, failed = 0;
+  for(const r of list){
+    if(!jsHasContent(r)){ await jsDel(r.id); continue; }
+    const draft = Object.assign({ id:r.id, deviceId:DEVICE_ID, deviceName:DEVICE_NAME, savedAt:r.savedAt || nowISO(), savedBy:r.savedBy||'', fromJobSite:true }, r.form||{},
+      { photos:[], beforePhotos:[], planFiles:[], floorPlan: r.floorPlan || null });
+    const res = await strictSend('onsiteDrafts', draft).catch(e=>({ok:false, err:String(e)}));
+    if(res && res.ok){ const i = DB.onsiteDrafts.findIndex(x=>x.id===draft.id); if(i>=0) DB.onsiteDrafts[i] = draft; else DB.onsiteDrafts.push(draft); await jsDel(r.id); sent++; }
+    else failed++;
+  }
+  STATE._jsUploading = false;
+  if(sent){ showToast('⬆ '+sent+' job-site worksheet'+(sent===1?'':'s')+' sent to the cloud — find '+(sent===1?'it':'them')+' under New Worksheet → Saved Drafts. Cleared off this iPad.'); try{ render(); }catch(e){} }
+  if(failed) showToast('⚠️ '+failed+' job-site worksheet'+(failed===1?'':'s')+' could not reach the cloud yet — still safe on this iPad. It will try again next time you open the app.');
+}
 function setBootStatus(msg){
   STATE.bootMsg = msg;
   const el = document.getElementById('boot-status');
@@ -1967,7 +2169,9 @@ async function loadAll(){
     const d = m && m.draftId && DB.onsiteDrafts.find(x=>x.id===m.draftId);
     if(d){ STATE.newDraftId = d.id; STATE.newOnsitePhotos = (d.photos||[]).slice(); STATE.newOnsiteBeforePhotos = (d.beforePhotos||[]).slice(); STATE.newPlanFiles = (d.planFiles||[]).slice(); STATE.newOnsiteFloorPlan = d.floorPlan || null; }
   }catch(e){}
+  if(STATE.jobsite) return;    // switched to Job Site Mode while this was loading
   STATE.loaded = true; render();
+  if(!STATE.offlineStart) setTimeout(()=>{ jsUploadAll().catch(()=>{}); }, 1500);
   if(STATE.offlineStart){ try{ showToast('📴 Offline mode — you can log in and do on-site worksheets. They save on this device and upload when you are back online.'); }catch(e){} }
   startLiveUpdates();
   // Safety net: if a client signed remotely but closed their page before the follow-up steps finished,
@@ -6424,7 +6628,8 @@ function normalizeDB(){
 }
 function render(){
   const app = document.getElementById('app');
-  if(!STATE.loaded){ app.innerHTML = `<div class="boot-screen"><div class="boot-spinner"></div><div class="name">GSB Field Ops 2.0</div><div id="boot-status">${STATE.bootMsg||'Starting up…'}</div></div>`; return; }
+  if(STATE.jobsite){ if(!STATE.sk2) renderJobsite(); return; }
+  if(!STATE.loaded){ app.innerHTML = `<div class="boot-screen"><div class="boot-spinner"></div><div class="name">GSB Field Ops 2.0</div><div id="boot-status">${STATE.bootMsg||'Starting up…'}</div>${jsCanStart() ? `<button class="btn ghost small" style="margin-top:18px;" onclick="jobsiteBoot(true)">📴 On the job site? Skip loading</button>` : ''}</div>`; return; }
   if(!STATE.user){ app.innerHTML = renderLogin(); attachLoginHandlers(); app.dataset.rendered = '1'; return; }
   normalizeDB();
   const p = perms();
@@ -6566,6 +6771,7 @@ const COMPANY_GATE_ENABLED = false; // temporarily off for iPad UI testing — f
 async function bootSequence(){
   const signToken = new URLSearchParams(window.location.search).get('sign');
   if(signToken){ await loadPublicSignPage(signToken); return; }
+  if(jsWanted() && jsCanStart()){ jobsiteBoot(false); return; }
   if(!COMPANY_GATE_ENABLED){ loadAll(); return; }
   if(fbAuth.isSignInWithEmailLink(window.location.href)){
     let email = localStorage.getItem('gsb2-gate-email');
@@ -6614,6 +6820,7 @@ function renderLogin(){
         <div class="field"><label>Your Code</label><input id="lg-code" type="password" placeholder="4-digit code" maxlength="6"></div>
         <button class="login-btn" data-action="do-login">Log In</button>
         <div id="lg-err" class="login-err"></div>
+        <button class="btn ghost" style="width:100%;margin-top:12px;" onclick="jobsiteBoot(true)">📴 I'm on the job site (no signal)</button>
         ${COMPANY_GATE_ENABLED ? `<div class="subtle" style="text-align:center;margin-top:16px;"><a href="#" data-action="logout-company" style="color:var(--muted);">Not your device? Log out of GSB</a></div>` : ''}
       </div>
     </div>
@@ -7209,6 +7416,99 @@ function onsiteReviewView(){
   </div>${foot}`;
 }
 
+/* ================= ASSOCIATION PACKAGE (condo / HOA approval) =================
+   Lives with the job's worksheet (that's where the sketch is). Company + GC + client info, the scope of work,
+   the existing floor plan (the job's sketch) and a NEW floor plan that starts as a copy of it and can be edited. */
+const GSB_CO = { name:'GSB General Construction Inc.', address:'13311 SW 9th Pl, Davie, FL 33325', phone:'954-605-4746', email:'Office@gsbconstructions.com', license:'CGC1539336' };
+function assocBaseSketch(f){
+  const sk = (ensureSketches(f)||[]).filter(x=>x && x.data);
+  const a = f.assoc || {};
+  return sk.find(x=>x.id===a.baseId) || sk[sk.length-1] || (f.floorPlan ? { id:'_fp', name:'Floor plan', data:f.floorPlan } : null);
+}
+function assocScopeDefault(f){
+  const part = (label, txt)=>{ const items = String(txt||'').split('\n').map(l=>l.replace(/^\s*(?:[-•*·]|\d+[.)])\s*/,'').trim()).filter(Boolean); return items.length ? label+':\n'+items.map(i=>'- '+i).join('\n') : ''; };
+  return [part('Demolition', f.demo), part('Construction & Installation', f.constr), part('Electrical & Plumbing', f.ep)].filter(Boolean).join('\n\n');
+}
+function assocData(f){
+  const a = Object.assign({}, f.assoc||{});
+  if(a.clientName===undefined) a.clientName = f.clientName || '';
+  if(a.clientPhone===undefined) a.clientPhone = f.phone || '';
+  if(a.address===undefined) a.address = f.propertyAddress || '';
+  if(a.scope===undefined) a.scope = assocScopeDefault(f);
+  if(a.hours===undefined) a.hours = 'Monday – Friday, 8:00 AM – 5:00 PM';
+  if(a.insurance===undefined) a.insurance = 'Certificate of insurance available / attached.';
+  return a;
+}
+function assocView(f){
+  const a = assocData(f), base = assocBaseSketch(f), sks = (ensureSketches(f)||[]).filter(x=>x && x.data);
+  const inp = (id, label, k, ph, type)=> `<div class="field"><label>${label}</label><input id="as-${id}" ${type?`type="${type}"`:''} value="${esc(a[k]||'')}" placeholder="${ph||''}"></div>`;
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      <button class="btn ghost small" data-action="assoc-close">← Back to the worksheet</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn ghost" data-action="assoc-save" data-id="${f.id}">💾 Save</button><button class="btn" data-action="assoc-print" data-id="${f.id}">🖨 Print / PDF for the association</button></div>
+    </div>
+    <div class="card" id="assoc-form">
+      <h2 class="page-title" style="margin:0 0 2px;">🏢 Association Package</h2>
+      <div class="subtle" style="margin-bottom:12px;">Everything the condo / HOA association needs to approve the work. Filled in from the worksheet — change anything, then Print / PDF. Saves as you go.</div>
+      <div class="section-label"><span class="ws-num">1</span>Our company</div>
+      <div class="assoc-co"><b>${GSB_CO.name}</b><br>${GSB_CO.address}<br>${GSB_CO.phone} · ${GSB_CO.email}<br>Florida License #${GSB_CO.license}</div>
+      <div class="form-grid">${inp('gcName','GC on site (name)','gcName','Who will be running the job on site')}${inp('gcPhone','GC on-site phone','gcPhone','')}</div>
+      <div class="section-label"><span class="ws-num">2</span>The association</div>
+      <div class="form-grid">${inp('assocName','Association / building name','assocName','e.g. Ocean Towers Condominium Association')}${inp('mgmt','Management company','mgmt','optional')}
+        ${inp('contactName','Contact person','contactName','optional')}${inp('contactEmail','Contact email','contactEmail','optional','email')}${inp('contactPhone','Contact phone','contactPhone','optional')}${inp('unit','Unit #','unit','e.g. 1204')}</div>
+      <div class="section-label"><span class="ws-num">3</span>Client &amp; property</div>
+      <div class="form-grid">${inp('clientName','Client (owner) name','clientName','')}${inp('clientPhone','Client phone','clientPhone','')}${inp('address','Property address','address','')}</div>
+      <div class="section-label"><span class="ws-num">4</span>Schedule</div>
+      <div class="form-grid">${inp('start','Planned start date','start','','date')}${inp('end','Expected finish date','end','','date')}${inp('hours','Work hours','hours','')}${inp('insurance','Insurance','insurance','')}</div>
+      <div class="section-label"><span class="ws-num">5</span>Scope of work</div>
+      <div class="field"><textarea id="as-scope" rows="8">${esc(a.scope||'')}</textarea></div>
+      <div class="field"><label>Notes for the association (optional)</label><textarea id="as-notes" rows="3" placeholder="e.g. Debris removed daily; elevator padding will be used">${esc(a.notes||'')}</textarea></div>
+    </div>
+    <div class="assoc-plans">
+      <div class="card">
+        <div class="section-label" style="margin-top:0;"><span class="ws-num">6</span>Existing floor plan</div>
+        ${base ? `${sks.length > 1 ? `<div class="field"><label>Which sketch?</label><select data-action-change="assoc-base" data-id="${f.id}">${sks.map(x=>`<option value="${x.id}" ${base.id===x.id?'selected':''}>${esc(x.name||'Sketch')}</option>`).join('')}</select></div>` : ''}
+          ${base.data.snapshot ? `<img class="assoc-img" src="${base.data.snapshot}">` : '<div class="subtle">(no picture saved for this sketch)</div>'}
+          <div class="subtle" style="font-size:12px;margin-top:6px;">This is the job's sketch from the worksheet.</div>`
+        : `<div class="subtle">This job has no sketch yet. Draw one on the worksheet first (✏️ Floor Plan Sketch).</div>`}
+      </div>
+      <div class="card">
+        <div class="section-label" style="margin-top:0;"><span class="ws-num">7</span>New floor plan</div>
+        ${a.newSketch ? `${a.newSketch.snapshot ? `<img class="assoc-img" src="${a.newSketch.snapshot}">` : ''}
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"><button class="btn" data-action="assoc-edit-new" data-id="${f.id}">✏️ Edit the new floor plan</button><button class="btn ghost small" data-action="assoc-reset-new" data-id="${f.id}">↺ Start over from the existing plan</button></div>`
+        : base ? `<div class="subtle" style="margin-bottom:8px;">Starts as a copy of the existing floor plan — then change walls, doors, layout, anything. The existing plan stays as it is.</div>
+          <button class="btn" data-action="assoc-make-new" data-id="${f.id}">➕ Make the new floor plan (copy the existing one)</button>`
+        : `<div class="subtle">Needs the existing sketch first.</div><button class="btn ghost" data-action="assoc-make-new" data-id="${f.id}" style="margin-top:8px;">✏️ Draw a new floor plan from scratch</button>`}
+      </div>
+    </div>`;
+}
+function assocCollect(f){
+  const a = assocData(f);
+  ['gcName','gcPhone','assocName','mgmt','contactName','contactEmail','contactPhone','unit','clientName','clientPhone','address','start','end','hours','insurance','scope','notes'].forEach(k=>{ const el = document.getElementById('as-'+k); if(el) a[k] = el.value; });
+  f.assoc = Object.assign(f.assoc||{}, a);
+  return f.assoc;
+}
+function assocPrintHTML(f){
+  const a = assocData(f), base = assocBaseSketch(f);
+  const row = (l, v)=> v ? `<tr><td style="width:38%;color:#6B6455;">${l}</td><td><b>${esc(v)}</b></td></tr>` : '';
+  const scopeHtml = esc(a.scope||'').split('\n').map(l=> /^\s*-\s+/.test(l) ? '&nbsp;&nbsp;•&nbsp;'+l.replace(/^\s*-\s+/,'') : (l.trim() ? '<b>'+l+'</b>' : '')).join('<br>');
+  return `<div class="contract-page">
+      <h2>ASSOCIATION WORK REQUEST</h2>
+      <div class="sub">${esc(a.assocName||'')}${a.unit ? ' · Unit '+esc(a.unit) : ''}</div>
+      <h4>Contractor</h4>
+      <table>${row('Company', GSB_CO.name)}${row('Address', GSB_CO.address)}${row('Phone', GSB_CO.phone)}${row('Email', GSB_CO.email)}${row('Florida license #', GSB_CO.license)}${row('GC on site', a.gcName)}${row('GC on-site phone', a.gcPhone)}</table>
+      <h4>Owner &amp; property</h4>
+      <table>${row('Owner', a.clientName)}${row('Owner phone', a.clientPhone)}${row('Property address', a.address)}${row('Unit #', a.unit)}</table>
+      ${(a.assocName || a.mgmt || a.contactName) ? `<h4>Association</h4><table>${row('Association', a.assocName)}${row('Management company', a.mgmt)}${row('Contact', a.contactName)}${row('Contact email', a.contactEmail)}${row('Contact phone', a.contactPhone)}</table>` : ''}
+      <h4>Schedule</h4>
+      <table>${row('Planned start', a.start ? fmtDate(a.start) : '')}${row('Expected finish', a.end ? fmtDate(a.end) : '')}${row('Work hours', a.hours)}${row('Insurance', a.insurance)}</table>
+      <h4>Scope of work</h4>
+      <div class="legal" style="font-size:12.5px;">${scopeHtml || '—'}</div>
+      ${a.notes ? `<h4>Notes</h4><p>${esc(a.notes).replace(/\n/g,'<br>')}</p>` : ''}
+    </div>
+    ${base && base.data.snapshot ? `<div class="contract-page"><h3 style="text-align:center;">Existing floor plan</h3><div class="sub">${esc(a.address||'')}${a.unit?' · Unit '+esc(a.unit):''}</div><img src="${base.data.snapshot}" style="width:100%;border:1px solid #ccc;"></div>` : ''}
+    ${a.newSketch && a.newSketch.snapshot ? `<div class="contract-page"><h3 style="text-align:center;">New floor plan</h3><div class="sub">${esc(a.address||'')}${a.unit?' · Unit '+esc(a.unit):''}</div><img src="${a.newSketch.snapshot}" style="width:100%;border:1px solid #ccc;"></div>` : ''}`;
+}
 function onsiteEditView(f){
   const v = (k)=> esc(f[k]||'');
   const ta = (id, label, k)=> `<div class="field"><label>${label}</label><textarea id="${id}" rows="3">${v(k)}</textarea></div>`;
@@ -7248,10 +7548,11 @@ function onsiteEditView(f){
 }
 function onsiteDetailView(f){
   if(STATE.onsiteEditId===f.id) return onsiteEditView(f);
+  if(STATE.assocFor===f.id) return assocView(f);
   const linkedEstimate = DB.estimates.find(e=>e.onsiteId===f.id);
   return `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
-      <button class="btn ghost small" data-action="back-review">← Back to Review Queue</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn ghost small" data-action="back-review">← Back to Review Queue</button><button class="btn ghost small" data-action="assoc-open" data-id="${f.id}">🏢 Association Package${f.assoc ? ' ✓' : ''}</button></div>
       ${`<button class="${linkedEstimate?'btn ghost':'btn'}" data-action="open-pricing-calculator-onsite" data-id="${f.id}">🧮 ${(f.pricingBreakdown && ((f.pricingBreakdown.materialLines||[]).length || (f.pricingBreakdown.subLines||[]).length || (f.pricingBreakdown.vendorLines||[]).length || parseFloat(f.pricingBreakdown.laborHours))) ? 'Open Saved Calculation' : 'Open Pricing Calculator'}</button>`}
     </div>
     ${lockBanner(f)}
@@ -7287,6 +7588,7 @@ function onsiteDetailView(f){
       `).join('')}</div>` : `<span class="subtle">No photos attached</span>`}
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:22px;flex-wrap:wrap;align-items:center;">
         ${f.pricingBreakdown ? `<span class="subtle" style="margin-right:auto;">Saved calculation total: <b>${money(calcPricingTotals(f.pricingBreakdown).grandTotal)}</b></span>` : ''}
+        <button class="btn ghost" data-action="assoc-open" data-id="${f.id}">🏢 Association Package</button>
         <button class="btn ghost" data-action="edit-onsite" data-id="${f.id}">✏️ Edit Worksheet</button>
         <button class="btn ghost" data-action="del-onsite" data-id="${f.id}">Delete Worksheet</button>
         ${linkedEstimate ? `<button class="btn ghost" data-action="view-estimate" data-id="${linkedEstimate.id}">View Estimate</button>` : ''}
@@ -9150,6 +9452,7 @@ function projectCardHTML(c, pr, opts){
       <div class="section-label" style="margin-top:16px;">Project Documents</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         ${pr.onsiteId ? `<button class="btn ghost small" data-action="view-project-onsite" data-id="${pr.onsiteId}">On-Site Worksheet</button>` : ''}
+        ${pr.onsiteId && DB.onsite.find(o=>o.id===pr.onsiteId) ? `<button class="btn ghost small" data-action="assoc-open-project" data-id="${pr.onsiteId}">🏢 Association Package${(DB.onsite.find(o=>o.id===pr.onsiteId)||{}).assoc ? ' ✓' : ''}</button>` : ''}
         ${pr.onsiteId && DB.onsite.find(o=>o.id===pr.onsiteId) ? `<button class="btn ghost small" data-action="view-project-sketches" data-id="${pr.onsiteId}">Sketches (${ensureSketches(DB.onsite.find(o=>o.id===pr.onsiteId)).length})</button>` : ''}
         ${pr.estimateId ? `<button class="btn ghost small" data-action="view-project-estimate" data-id="${pr.estimateId}">Estimate${(()=>{const es=DB.estimates.find(x=>x.id===pr.estimateId); return es&&es.signedAt?' ✓ Signed '+fmtDate(es.signedAt):'';})()}</button>` : ''}
         ${pr.contractId ? `<button class="btn ghost small" data-action="view-project-contract" data-id="${pr.contractId}">Contract${(()=>{const ct=DB.contracts.find(x=>x.id===pr.contractId); return ct&&ct.signedAt?' ✓ Signed '+fmtDate(ct.signedAt):'';})()}</button>` : ''}
@@ -9881,7 +10184,30 @@ Office@gsbconstructions.com`);
     }, {kind:'view-onsite', id:f.id});
   }));
   document.querySelectorAll('[data-action="open-onsite"]').forEach(el=>el.addEventListener('click', ()=>{ STATE.activeOnsiteId=el.dataset.id; render(); }));
-  bindClick('back-review', ()=>{ STATE.activeOnsiteId=null; STATE.onsiteEditId=null; render(); });
+  bindClick('back-review', ()=>{ STATE.activeOnsiteId=null; STATE.onsiteEditId=null; STATE.assocFor=null; render(); });
+  const assocSave = async (f, quiet)=>{ assocCollect(f); await saveRecord('onsite', f); if(!quiet) showToast('✓ Association package saved'); };
+  bindClick('assoc-open', (el)=>{ STATE.assocFor = el.dataset.id; STATE.onsiteEditId = null; render(); window.scrollTo(0,0); });
+  bindClick('assoc-open-project', (el)=>{ STATE.view = 'onsite'; STATE.subtab.onsite = 'review'; STATE.activeOnsiteId = el.dataset.id; STATE.assocFor = el.dataset.id; STATE.onsiteEditId = null; render(); window.scrollTo(0,0); });
+  bindClick('assoc-close', async ()=>{ const f = DB.onsite.find(x=>x.id===STATE.assocFor); if(f && document.getElementById('assoc-form')) await assocSave(f, true); STATE.assocFor = null; render(); window.scrollTo(0,0); });
+  bindClick('assoc-save', async (el)=>{ const f = DB.onsite.find(x=>x.id===el.dataset.id); if(f) await assocSave(f); });
+  bindClick('assoc-print', async (el)=>{ const f = DB.onsite.find(x=>x.id===el.dataset.id); if(!f) return; await assocSave(f, true); printDocument('Association Package — '+(f.assoc.clientName||f.clientName||''), assocPrintHTML(f)); });
+  { const af = document.getElementById('assoc-form'); if(af){ let t = null; af.addEventListener('input', ()=>{ clearTimeout(t); t = setTimeout(()=>{ const f = DB.onsite.find(x=>x.id===STATE.assocFor); if(f) assocSave(f, true); }, 1200); }); } }
+  document.querySelectorAll('[data-action-change="assoc-base"]').forEach(el=>el.addEventListener('change', async ()=>{ const f = DB.onsite.find(x=>x.id===el.dataset.id); if(!f) return; assocCollect(f); f.assoc.baseId = el.value; render(); await saveRecord('onsite', f); }));
+  const assocOpenNew = (f)=>{
+    openSketchEditor(f.assoc.newSketch || null, false, async (data)=>{ f.assoc = f.assoc || {}; f.assoc.newSketch = data; render(); await saveRecord('onsite', f); showToast('✓ New floor plan saved'); }, {kind:'assoc', id:f.id});
+  };
+  bindClick('assoc-make-new', async (el)=>{
+    const f = DB.onsite.find(x=>x.id===el.dataset.id); if(!f) return; assocCollect(f);
+    const base = assocBaseSketch(f);
+    if(base){ const copy = JSON.parse(JSON.stringify(base.data)); if(copy.plan){ delete copy.plan.calcItems; delete copy.plan.calcSent; } f.assoc.newSketch = copy; f.assoc.baseId = base.id; }
+    await saveRecord('onsite', f); assocOpenNew(f);
+  });
+  bindClick('assoc-edit-new', (el)=>{ const f = DB.onsite.find(x=>x.id===el.dataset.id); if(f){ assocCollect(f); assocOpenNew(f); } });
+  bindClick('assoc-reset-new', async (el)=>{
+    const f = DB.onsite.find(x=>x.id===el.dataset.id); if(!f) return;
+    if(!confirm('Throw away the changes to the new floor plan and start over from a fresh copy of the existing one?')) return;
+    assocCollect(f); delete f.assoc.newSketch; render(); await saveRecord('onsite', f);
+  });
   bindClick('toggle-show-lost', ()=>{ STATE.showLost = !STATE.showLost; render(); window.scrollTo(0,0); });
   bindClick('wr-range', (el)=>{ STATE.wrRange = el.dataset.range; render(); });
   bindClick('est-lost-open', (el)=>{ const e = DB.estimates.find(x=>x.id===el.dataset.id); if(e){ STATE.modal = { type:'estimate-lost', data:e }; render(); } });
@@ -10937,6 +11263,7 @@ async function autoCreateOrAttachClient(contract, scans){
 }
 
 if(typeof firebase !== 'undefined'){ bootSequence(); }
+else if(!new URLSearchParams(window.location.search).get('sign') && jsCanStart()){ jobsiteBoot(false); }   // the cloud library didn't load (no signal) — the job-site worksheet + sketch still work
 
 /* ---- Offline indicator: the app keeps working without signal and sends everything when it comes back ---- */
 (function(){
@@ -10986,6 +11313,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.13-b</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.13-c</div>
 </body>
 </html>
