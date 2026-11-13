@@ -169,6 +169,23 @@ h1.page-title{font-family:'Oswald',sans-serif;font-size:25px;margin:0 0 4px;lett
 .lock-banner{display:flex;align-items:center;gap:10px;border-radius:7px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;}
 .lock-banner.editable{background:#FDF3E3;color:var(--amber);border:1px solid #EAD6A8;}
 .lock-banner.locked{background:#EFEBE0;color:var(--ink);border:1px solid var(--line);}
+.lost-reasons{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px;}
+.lost-reason{display:flex;align-items:center;gap:8px;padding:11px 12px;border:1px solid var(--line);border-radius:8px;cursor:pointer;font-size:14px;background:#fff;}
+.lost-reason:has(input:checked){border-color:var(--brown,#7A6A45);background:#FBF6EA;font-weight:600;}
+.lost-banner{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;background:#FCEDEA;border:1px solid #E3B5AD;color:#6E2318;border-radius:8px;padding:11px 14px;margin:0 0 12px;font-size:13.5px;}
+.wr-ranges{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 14px;}
+.wr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:12px;}
+.wr-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px;}
+.wr-card.main{background:var(--brown,#7A6A45);border-color:var(--brown,#7A6A45);color:#fff;}
+.wr-card.main .wr-sub,.wr-card.main .wr-label{color:rgba(255,255,255,.85);}
+.wr-big{font:700 30px Inter,sans-serif;line-height:1.1;}
+.wr-card.ok .wr-big{color:#2E7D46;} .wr-card.bad .wr-big{color:#B3261E;}
+.wr-label{font:600 12px 'Oswald',sans-serif;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-top:4px;}
+.wr-sub{font-size:12.5px;color:var(--muted);margin-top:4px;}
+.wr-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px;}
+.wr-half{margin:0;}
+.wr-bar{margin:8px 0;} .wr-bar-top{display:flex;justify-content:space-between;gap:8px;font-size:13.5px;margin-bottom:4px;}
+.wr-track{height:9px;background:#F0ECE2;border-radius:6px;overflow:hidden;} .wr-fill{height:100%;background:#B3261E;border-radius:6px;}
 .pj-more{margin-top:16px;border:1px solid var(--line);border-radius:8px;background:#FBFAF6;}
 .pj-more > summary{list-style:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:11px 14px;cursor:pointer;font-weight:600;font-size:13.5px;}
 .pj-more > summary::-webkit-details-marker{display:none;}
@@ -295,7 +312,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.13-a';
+const APP_VERSION = 'v2.0-2026.11.13-b';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -3990,10 +4007,10 @@ function sk2SaveCalc(){ try{ localStorage.setItem(SK2_CALC_KEY, JSON.stringify(S
 /* the picked items live with the sketch (and the last list is remembered for the next sketch) */
 function sk2CalcItems(){
   const S = STATE.sk2, plan = S.plan;
-  if(!Array.isArray(plan.calcItems)){ let last = []; try{ last = JSON.parse(localStorage.getItem(SK2_CALC_KEY+'-items')||'[]'); }catch(e){} plan.calcItems = Array.isArray(last) ? last.filter(x=>DB.materials.some(m=>m.id===x.mid)) : []; }
+  if(!Array.isArray(plan.calcItems)) plan.calcItems = [];   // a new sketch / new job starts with an empty list
   return plan.calcItems;
 }
-function sk2SaveItems(){ const S = STATE.sk2; S.dirty = true; try{ localStorage.setItem(SK2_CALC_KEY+'-items', JSON.stringify(S.plan.calcItems||[])); }catch(e){} }
+function sk2SaveItems(){ const S = STATE.sk2; S.dirty = true; }   // the list is saved with this sketch only
 /* how each kind of item is counted */
 const SK2_METHODS = {
   sheets:  { label:'Sheets on the walls',           p:'Sq ft per sheet' },
@@ -6978,9 +6995,10 @@ function renderOnsite(){
       ${p.onsiteSubmit ? `<button data-subtab="onsite:new" class="${tab==='new'?'active':''}">New Worksheet</button>` : ''}
       ${p.onsiteReview ? `<button data-subtab="onsite:review" class="${tab==='review'?'active':''}">Review Queue ${pendingBadge()}</button>` : ''}
       <button data-subtab="onsite:estimates" class="${tab==='estimates'?'active':''}">Estimates</button>
+      ${p.onsiteReview ? `<button data-subtab="onsite:winrate" class="${tab==='winrate'?'active':''}">📊 Win Rate</button>` : ''}
       <button data-subtab="onsite:contracts" class="${tab==='contracts'?'active':''}">Contracts ${signedEstimatesReady().length?`<span class="tag reviewed" style="margin-left:6px;">${signedEstimatesReady().length} ready</span>`:''}</button>
     </div>
-    ${tab==='new' ? onsiteFormView() : tab==='review' ? onsiteReviewView() : tab==='estimates' ? estimatesListView() : contractsListView()}
+    ${tab==='new' ? onsiteFormView() : tab==='review' ? onsiteReviewView() : tab==='estimates' ? estimatesListView() : (tab==='winrate' && p.onsiteReview) ? winRateView() : contractsListView()}
   `;
 }
 function pendingBadge(){ const n = DB.onsite.filter(f=>f.status==='pending').length; return n>0?`<span class="tag pending" style="margin-left:6px;">${n}</span>`:''; }
@@ -7574,20 +7592,22 @@ function estimateForm(d){
 }
 
 function estimatesListView(){
-  const list = [...DB.estimates].filter(e=>!e.archived).sort((a,b)=>b.dateCreated.localeCompare(a.dateCreated));
-  return `<div class="card" style="padding:8px 20px;">
+  const lostAll = DB.estimates.filter(e=>e.lost);
+  const list = [...DB.estimates].filter(e=> STATE.showLost ? !!e.lost : (!e.archived && !e.lost)).sort((a,b)=>String(b.dateCreated||'').localeCompare(String(a.dateCreated||'')));
+  const foot = (lostAll.length || STATE.showLost) ? `<div style="text-align:center;margin-top:10px;"><button class="btn ghost small" data-action="toggle-show-lost">${STATE.showLost ? '← Back to estimates' : '👎 Didn\'t move forward ('+lostAll.length+')'}</button></div>` : '';
+  return `${STATE.showLost ? '<div class="banner-note" style="margin-bottom:10px;">Estimates where the client didn\'t move forward. Open one to see why — or to undo it if they come back.</div>' : ''}<div class="card" style="padding:8px 20px;">
     ${list.length===0 ? emptyState('No estimates yet','') : list.map(e=>`
       <div class="list-row">
         <div class="main"><b>${esc(e.clientName)}</b> <span style="color:var(--muted);font-size:13px"> — ${esc(e.jobName)}</span>
           <div class="meta">${fmtDate(e.date)} &nbsp;·&nbsp; Total ${money(totalEstimate(e))}</div></div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <span class="tag ${e.status==='signed'?'reviewed':'pending'}">${e.status==='signed'?(e.signedOnPaper?'SIGNED ON PAPER':'SIGNED'):'AWAITING SIGNATURE'}</span>
+          ${e.lost ? `<span class="tag overdue">NO — ${esc(e.lost.reason||'')}</span>` : `<span class="tag ${e.status==='signed'?'reviewed':'pending'}">${e.status==='signed'?(e.signedOnPaper?'SIGNED ON PAPER':'SIGNED'):'AWAITING SIGNATURE'}</span>`}
           ${contractForEstimate(e) ? `<button class="btn ghost small" data-action="open-docs-ready" data-id="${e.id}">📄 Estimate & Contract</button>` : ''}
           <button class="btn ghost small" data-action="del-estimate" data-id="${e.id}">Delete</button>
           <button class="btn ghost small" data-action="view-estimate" data-id="${e.id}">Open</button>
         </div>
       </div>`).join('')}
-  </div>`;
+  </div>${foot}`;
 }
 
 const ESTIMATE_EMAIL_SUBJECT = 'Your Project Estimate — Ready to Sign — GSB General Construction Inc';
@@ -7603,6 +7623,81 @@ function estimatePricingTableHTML(e){
   const total = totalEstimate(e);
   return `<table class="hist"><tr><td>Construction & Installation</td><td style="text-align:right;">${money(total)}</td></tr>
       <tr><td><b>Total Estimated Price</b></td><td style="text-align:right;"><b>${money(total)}</b></td></tr></table>`;
+}
+/* ---- estimates that didn't move forward, and the win-rate numbers ---- */
+const LOST_REASONS = ['Price too high','Went with another contractor','Timing / schedule didn\'t work','Decided not to do the project','Financing / budget fell through','Stopped responding','Wanted a different scope','Other'];
+function estOutcome(e){
+  if(e.lost) return 'lost';
+  const c = contractForEstimate(e);
+  if(e.signedAt || e.status==='signed' || (c && c.status==='signed')) return 'won';
+  return 'open';
+}
+function estimateLostForm(e){
+  const cur = e.lost || {};
+  return `<div class="modal-head"><h2 class="page-title" style="margin:0">Didn't move forward</h2><button class="close-x" data-action="est-lost-cancel" data-id="${e.id}">×</button></div>
+    <div class="subtle" style="margin-bottom:12px;">${esc(e.clientName||'')}${e.jobName?' — '+esc(e.jobName):''} · ${money(totalEstimate(e))}<br>Why did the client say no? This goes into your <b>📊 Win Rate</b> numbers.</div>
+    <div class="section-label" style="margin-top:0;">Main reason</div>
+    <div class="lost-reasons">${LOST_REASONS.map(r=>`<label class="lost-reason"><input type="radio" name="lost-reason" value="${esc(r)}" ${cur.reason===r?'checked':''}> ${esc(r)}</label>`).join('')}</div>
+    <div class="form-grid" style="margin-top:12px;">
+      <div class="field"><label>Their other price, if you know it ($) — optional</label><input id="lost-other" type="number" inputmode="decimal" step="1" value="${cur.otherPrice||''}" placeholder="e.g. 18000"></div>
+      <div class="field"><label>Date they said no</label><input id="lost-date" type="date" value="${cur.date||todayStr()}"></div>
+    </div>
+    <div class="field"><label>Notes — what did they say? (optional)</label><textarea id="lost-note" rows="3" placeholder="e.g. Said another company quoted $4,000 less; wants to wait until spring">${esc(cur.note||'')}</textarea></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
+      <button class="btn ghost" data-action="est-lost-cancel" data-id="${e.id}">Cancel</button>
+      <button class="btn" data-action="est-lost-save" data-id="${e.id}">Save</button>
+    </div>`;
+}
+function winRateView(){
+  const p = perms(), range = STATE.wrRange || 'all';
+  const since = range==='all' ? '' : new Date(Date.now() - (+range)*864e5).toISOString().slice(0,10);
+  const all = DB.estimates.filter(e=>{ const d = String(e.date || e.dateCreated || '').slice(0,10); return !since || d >= since; });
+  const won = all.filter(e=>estOutcome(e)==='won'), lost = all.filter(e=>estOutcome(e)==='lost'), open = all.filter(e=>estOutcome(e)==='open');
+  const sum = (l)=> l.reduce((t,e)=>t + totalEstimate(e), 0), pct = (a,b)=> b ? Math.round(a*100/b) : 0;
+  const answered = won.length + lost.length, rate = pct(won.length, answered);
+  const m = (v)=> p.money ? money(v) : '<span style="filter:blur(5px)">$XX,XXX</span>';
+  const reasons = {}; lost.forEach(e=>{ const r = (e.lost && e.lost.reason) || 'No reason given'; reasons[r] = (reasons[r]||0) + 1; });
+  const rlist = Object.entries(reasons).sort((a,b)=>b[1]-a[1]);
+  const avg = (l)=> l.length ? sum(l)/l.length : 0;
+  const withOther = lost.filter(e=>e.lost && parseFloat(e.lost.otherPrice) > 0);
+  const gap = withOther.length ? withOther.reduce((t,e)=>t + (totalEstimate(e) - parseFloat(e.lost.otherPrice)), 0)/withOther.length : 0;
+  const ranges = [['all','All time'],['365','Last 12 months'],['90','Last 90 days'],['30','Last 30 days']];
+  const card = (big, label, sub, cls)=> `<div class="wr-card ${cls||''}"><div class="wr-big">${big}</div><div class="wr-label">${label}</div>${sub?`<div class="wr-sub">${sub}</div>`:''}</div>`;
+  return `
+    <div class="wr-ranges">${ranges.map(([k,l])=>`<button class="btn small ${k===range?'':'ghost'}" data-action="wr-range" data-range="${k}">${l}</button>`).join('')}</div>
+    ${!all.length ? emptyState('No estimates in this time yet','Your numbers show up here as estimates get signed — or marked "didn\'t move forward".') : `
+    <div class="wr-grid">
+      ${card(answered ? rate+'%' : '—', 'Win rate', answered ? `${won.length} yes out of ${answered} answers` : 'No answers yet', 'main')}
+      ${card(won.length, '✅ Said yes', `${pct(won.length, all.length)}% of all estimates · ${m(sum(won))}`, 'ok')}
+      ${card(lost.length, '👎 Said no', `${pct(lost.length, all.length)}% of all estimates · ${m(sum(lost))}`, 'bad')}
+      ${card(open.length, '⏳ Still waiting', `${pct(open.length, all.length)}% of all estimates · ${m(sum(open))}`, '')}
+    </div>
+    <div class="wr-row">
+      <div class="card wr-half">
+        <div class="section-label" style="margin-top:0;">Why they said no</div>
+        ${rlist.length ? rlist.map(([r,n])=>`<div class="wr-bar"><div class="wr-bar-top"><span>${esc(r)}</span><b>${n} · ${pct(n, lost.length)}%</b></div><div class="wr-track"><div class="wr-fill" style="width:${pct(n, lost.length)}%"></div></div></div>`).join('') : '<div class="subtle">Nobody has said no yet in this time.</div>'}
+      </div>
+      <div class="card wr-half">
+        <div class="section-label" style="margin-top:0;">Pricing</div>
+        <table class="hist">
+          <tr><td>Average job that said yes</td><td style="text-align:right;"><b>${won.length ? m(avg(won)) : '—'}</b></td></tr>
+          <tr><td>Average job that said no</td><td style="text-align:right;"><b>${lost.length ? m(avg(lost)) : '—'}</b></td></tr>
+          <tr><td>Said no because of price</td><td style="text-align:right;"><b>${lost.length ? pct(reasons['Price too high']||0, lost.length)+'%' : '—'}</b> <span class="subtle">of the no's</span></td></tr>
+          ${withOther.length ? `<tr><td>We were higher than the other price by (average of ${withOther.length})</td><td style="text-align:right;"><b>${m(gap)}</b></td></tr>` : ''}
+        </table>
+        <div class="subtle" style="font-size:12px;margin-top:8px;">Win rate only counts jobs that gave an answer (yes or no). "Still waiting" jobs aren't counted until they decide.</div>
+      </div>
+    </div>
+    <div class="section-label">Jobs that didn't move forward</div>
+    <div class="card" style="padding:8px 20px;">
+      ${lost.length ? lost.sort((a,b)=>String((b.lost&&b.lost.date)||'').localeCompare(String((a.lost&&a.lost.date)||''))).map(e=>`
+        <div class="list-row">
+          <div class="main"><b>${esc(e.clientName)}</b> <span style="color:var(--muted);font-size:13px"> — ${esc(e.jobName||'')}</span>
+            <div class="meta">${fmtDate(e.lost.date || String(e.lost.at||'').slice(0,10))} · ${m(totalEstimate(e))} · <b>${esc(e.lost.reason||'No reason given')}</b>${e.lost.otherPrice ? ' · other price '+m(parseFloat(e.lost.otherPrice)) : ''}</div>
+            ${e.lost.note ? `<div class="meta" style="margin-top:2px;">“${esc(e.lost.note)}”</div>` : ''}</div>
+          <button class="btn ghost small" data-action="view-estimate" data-id="${e.id}">Open</button>
+        </div>`).join('') : '<div class="subtle" style="padding:10px 0;">None in this time.</div>'}
+    </div>`}`;
 }
 function totalEstimate(e){ const p=e.pricing; return (parseFloat(p.permit)||0)+(parseFloat(p.constr)||0); }
 
@@ -7776,11 +7871,14 @@ function estimateDetailView(e){
     <div class="modal-head"><h2 class="page-title" style="margin:0">Estimate — ${esc(e.clientName)}</h2><div style="display:flex;gap:8px;align-items:center;"><button class="btn ghost small" data-action="del-estimate" data-id="${e.id}">Delete</button><button class="close-x" data-action="close-modal">×</button></div></div>
     ${!e.signedAt ? lockBanner(e) : ''}
     <div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin:0 0 10px;">
+      ${!e.lost && estOutcome(e)==='open' ? `<button class="btn ghost small" data-action="est-lost-open" data-id="${e.id}">👎 Didn't move forward</button>` : ''}
       <button class="btn ghost small" data-action="open-docs-ready" data-id="${e.id}">📄 Estimate &amp; Contract</button>
       ${e.onsiteId && DB.onsite.some(o=>o.id===e.onsiteId) ? `<button class="btn ghost small" data-action="open-estimate-worksheet" data-id="${e.onsiteId}">📝 Worksheet &amp; calculator</button>` : ''}
       <button class="btn ghost small" data-action="print-estimate-paper" data-id="${e.id}">🖨 ${e.signedAt?'Print':'Print for Paper Signing'}</button>
       ${c ? `<button class="btn ghost small" data-action="print-both" data-id="${e.id}">🖨 Print Both</button>` : ''}
     </div>
+    ${e.lost ? `<div class="lost-banner"><div><b>👎 Didn't move forward</b> — ${esc(e.lost.reason||'')}${e.lost.date ? ' · '+fmtDate(e.lost.date) : ''}${e.lost.otherPrice ? ' · other price '+money(parseFloat(e.lost.otherPrice)) : ''}${e.lost.note ? `<div class="subtle" style="margin:3px 0 0;">“${esc(e.lost.note)}”</div>` : ''}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;"><button class="btn ghost small" data-action="est-lost-open" data-id="${e.id}">Edit reason</button><button class="btn small" data-action="est-lost-undo" data-id="${e.id}">↩ They came back — undo</button></div></div>` : ''}
     ${langToggleHTML('estimate', e, lang, false)}
     ${frStaffNotesHTML('estimate', e, lang, !e.signedAt)}
     <div style="border:1px solid var(--line);border-radius:8px;padding:22px;background:#fff;">${estimateDocHTML(e, {lang})}</div>
@@ -7824,7 +7922,7 @@ function signedEstimatesReady(){
     .sort((a,b)=>(b.signedAt||b.dateCreated||'').localeCompare(a.signedAt||a.dateCreated||''));
 }
 function contractsListView(){
-  const list = [...DB.contracts].filter(c=>!c.archived).sort((a,b)=>b.dateCreated.localeCompare(a.dateCreated));
+  const list = [...DB.contracts].filter(c=>!c.archived && !(c.status!=='signed' && (c.lost || DB.estimates.some(e=>e.id===c.estimateId && e.lost)))).sort((a,b)=>b.dateCreated.localeCompare(a.dateCreated));
   const ready = signedEstimatesReady();
   const readyHtml = ready.length ? `
     <div class="section-label" style="margin-top:0;">Signed Estimates — Ready to Build a Contract</div>
@@ -9545,6 +9643,7 @@ function renderModal(){
   if(m.type==='vendor-form') inner = vendorForm();
   if(m.type==='estimate-form') inner = estimateForm(m.data);
   if(m.type==='estimate-detail') inner = estimateDetailView(m.data);
+  if(m.type==='estimate-lost') inner = estimateLostForm(m.data);
   if(m.type==='docs-ready') inner = docsReadyView(m.data);
   if(m.type==='contract-form') inner = contractForm(m.data);
   if(m.type==='new-material-form') inner = newMaterialForm(m.data);
@@ -9783,6 +9882,26 @@ Office@gsbconstructions.com`);
   }));
   document.querySelectorAll('[data-action="open-onsite"]').forEach(el=>el.addEventListener('click', ()=>{ STATE.activeOnsiteId=el.dataset.id; render(); }));
   bindClick('back-review', ()=>{ STATE.activeOnsiteId=null; STATE.onsiteEditId=null; render(); });
+  bindClick('toggle-show-lost', ()=>{ STATE.showLost = !STATE.showLost; render(); window.scrollTo(0,0); });
+  bindClick('wr-range', (el)=>{ STATE.wrRange = el.dataset.range; render(); });
+  bindClick('est-lost-open', (el)=>{ const e = DB.estimates.find(x=>x.id===el.dataset.id); if(e){ STATE.modal = { type:'estimate-lost', data:e }; render(); } });
+  bindClick('est-lost-cancel', (el)=>{ const e = DB.estimates.find(x=>x.id===el.dataset.id); STATE.modal = e ? { type:'estimate-detail', data:e } : null; render(); });
+  bindClick('est-lost-save', async (el)=>{
+    const e = DB.estimates.find(x=>x.id===el.dataset.id); if(!e) return;
+    const r = document.querySelector('input[name="lost-reason"]:checked'); if(!r){ alert('Pick the main reason they said no.'); return; }
+    const g = (id)=>{ const x = document.getElementById(id); return x ? x.value.trim() : ''; };
+    e.lost = { reason:r.value, note:g('lost-note'), otherPrice:g('lost-other'), date:g('lost-date') || todayStr(), at:(e.lost && e.lost.at) || nowISO(), by:STATE.user.first+' '+STATE.user.last };
+    const c = contractForEstimate(e); if(c && c.status!=='signed'){ c.lost = e.lost; }
+    STATE.modal = { type:'estimate-detail', data:e }; render();
+    await saveRecord('estimates', e); if(c && c.status!=='signed') await saveRecord('contracts', c);
+    showToast('Saved — moved to "Didn\'t move forward". It counts in your 📊 Win Rate.');
+  });
+  bindClick('est-lost-undo', async (el)=>{
+    const e = DB.estimates.find(x=>x.id===el.dataset.id); if(!e) return;
+    delete e.lost; const c = contractForEstimate(e); if(c && c.lost) delete c.lost;
+    render(); await saveRecord('estimates', e); if(c) await saveRecord('contracts', c);
+    showToast('↩ Back in your estimates');
+  });
   bindClick('toggle-moved-on', ()=>{ STATE.showMovedOn = !STATE.showMovedOn; render(); window.scrollTo(0,0); });
   bindClick('open-estimate-worksheet', (el)=>{ STATE.modal = null; STATE.view = 'onsite'; STATE.subtab.onsite = 'review'; STATE.activeOnsiteId = el.dataset.id; STATE.onsiteEditId = null; render(); window.scrollTo(0,0); });
   bindClick('edit-onsite', (el)=>{ STATE.onsiteEditId = el.dataset.id; render(); window.scrollTo(0,0); });
@@ -10867,6 +10986,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.13-a</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.13-b</div>
 </body>
 </html>
