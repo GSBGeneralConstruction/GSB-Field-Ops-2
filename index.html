@@ -295,7 +295,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2.0-2026.11.12-p';
+const APP_VERSION = 'v2.0-2026.11.13-a';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -739,7 +739,7 @@ function computeLockAt(submittedAtISO){
   const lock = new Date(d.getFullYear(), d.getMonth(), d.getDate()+1, 8, 30, 0);
   return lock.toISOString();
 }
-function isLocked(item){ return new Date() >= new Date(item.lockAt); }
+function isLocked(item){ return false; }   // locking turned off: worksheets and estimates stay editable (signed documents still can't change)
 
 /* ---- Live updates: things that happen on other devices (like a client signing) show up here without reloading ---- */
 function showToast(msg){
@@ -3218,6 +3218,7 @@ function sk2BuildDom(){
     #sk2-root .sk2-item .acts{display:flex;gap:6px;margin-top:6px;}
     #sk2-root .sk2-item .acts button{background:none;border:0;padding:3px 0;margin-right:10px;font:600 12px Inter,sans-serif;color:#7A6A45;cursor:pointer;}
     #sk2-root .sk2-find{margin-top:10px;}
+    #sk2-root .sk2-addmat{width:100%;padding:12px;border:1.5px dashed #7A6A45;border-radius:9px;background:#FBFAF6;font:600 13.5px Inter,sans-serif;color:#4a3f27;cursor:pointer;text-align:left;}
     #sk2-root .sk2-send{background:#F1F7F2;border:1px solid #CFE3D4;border-radius:9px;padding:9px;margin:12px 0 6px;}
     #sk2-root .sk2-send .sk2-b.main{background:#3F7D4F;border-color:#3F7D4F;}
     #sk2-root .sk2-find input{width:100%;box-sizing:border-box;padding:10px;border:1.5px solid #CFC6B0;border-radius:8px;font:16px Inter,sans-serif;}
@@ -4122,9 +4123,8 @@ function sk2CalcHTML(plan, m){
     ${settings}
     ${rows || `<p class="sub" style="margin-top:10px;">Add materials from your catalog — the app works out how many you need for what's selected.</p>`}
     <div class="sk2-find">
-      <input id="sk2c-find" type="search" placeholder="➕ Add a material — type drywall, stud, screws…" autocomplete="off" value="${esc(S.calcQ||'')}">
-      <div id="sk2c-results">${sk2FindHTML(S.calcQ)}</div>
-      ${S.calcQ ? '' : `<div class="sk2-chips">${quick.map(w=>`<button type="button" data-sk2c-q="${w}">${w}</button>`).join('')}</div>`}
+      <button type="button" class="sk2-addmat" data-sk2c-open="">🔍 Add a material — search your catalog with pictures</button>
+      <div class="sk2-chips">${quick.map(w=>`<button type="button" data-sk2c-q="${w}">${w}</button>`).join('')}</div>
     </div>
     ${items.length ? `${sk2SendHTML()}<div class="sk2-row"><button class="sk2-b" data-sk2p="calccopy">📄 Copy this list as text</button></div>
     <p class="sub" style="font-size:11.5px;">Quick estimates, rounded up — double-check before ordering. Tap ⚙ to change how any item is counted.</p>` : ''}
@@ -4161,17 +4161,15 @@ function sk2BindCalc(){
   on('sk2c-waste', (el)=>{ const v = parseFloat(el.value); c.waste = isFinite(v) && v >= 0 ? v : 0; });
   on('sk2c-ops', (el)=>{ c.openings = el.checked; });
   const panel = document.getElementById('sk2-panel'); if(!panel) return;
-  const find = document.getElementById('sk2c-find');
-  if(find) find.addEventListener('input', ()=>{ S.calcQ = find.value; const r = document.getElementById('sk2c-results'); if(r) r.innerHTML = sk2FindHTML(S.calcQ); const ch = panel.querySelector('.sk2-chips'); if(ch) ch.style.display = S.calcQ ? 'none' : ''; });
-  panel.querySelectorAll('[data-sk2c-q]').forEach(b=>b.addEventListener('click', ()=>{ S.calcQ = b.dataset.sk2cQ; sk2Panel(); const f2 = document.getElementById('sk2c-find'); if(f2){ f2.focus(); f2.setSelectionRange(f2.value.length, f2.value.length); } }));
-  const res = document.getElementById('sk2c-results');
-  if(res) res.addEventListener('click', (e)=>{
-    const b = e.target.closest('[data-sk2c-add]'); if(!b) return;
-    const mm = DB.materials.find(z=>z.id===b.dataset.sk2cAdd); if(!mm) return;
+  const addMat = (id)=>{
+    const mm = DB.materials.find(z=>z.id===id); if(!mm) return;
     if(items.some(it=>it.mid===mm.id)){ sk2Toast('Already on the list'); return; }
-    items.push(Object.assign({ mid:mm.id }, sk2GuessMethod(mm))); S.calcQ = ''; sk2SaveItems(); sk2Panel();
+    items.push(Object.assign({ mid:mm.id }, sk2GuessMethod(mm))); sk2SaveItems(); sk2Panel();
+    const pn = document.getElementById('sk2-panel'), last = pn && pn.querySelectorAll('.sk2-item'); if(last && last.length) try{ last[last.length-1].scrollIntoView({block:'nearest'}); }catch(e){}
     sk2Toast('✓ Added '+mm.name+' — tap ⚙ if it should be counted differently');
-  });
+  };
+  panel.querySelectorAll('[data-sk2c-open]').forEach(b=>b.addEventListener('click', ()=> openMatPicker(null, null, addMat, '')));
+  panel.querySelectorAll('[data-sk2c-q]').forEach(b=>b.addEventListener('click', ()=> openMatPicker(null, null, addMat, b.dataset.sk2cQ)));
   panel.querySelectorAll('[data-sk2c-method]').forEach(el=>el.addEventListener('change', ()=>{ const it = items[+el.dataset.sk2cMethod]; if(!it) return; it.method = el.value;
     const mm = DB.materials.find(z=>z.id===it.mid), g = mm ? sk2GuessMethod(mm) : {}; if(g.method===it.method){ it.p = g.p; it.p2 = g.p2; } else { const d = { sheets:32, ceiling:32, studs:8, track:10, wall:300, cavity:40, floor:1, lf:8, perstud:4, anchors:24, manual:1 }; it.p = d[it.method] ?? it.p; it.p2 = it.method==='track' ? 2 : it.method==='perstud' ? 1000 : it.method==='anchors' ? 100 : undefined; }
     sk2SaveItems(); sk2Panel(); }));
@@ -4351,8 +4349,11 @@ function sk2Panel(){
       ${t.rooms.length ? `<div class="sk2-list">${t.rooms.map(r=>`<div data-sk2p="openroom" data-rid="${r.id}"><span><b>${esc(r.name)}</b>${r.measured<r.walls?' <span style="color:#B8863A">(~)</span>':''}</span><span>${r.sqft.toFixed(1)} sq ft · ${r.lf.toFixed(1)} LF</span></div>`).join('')}</div>` : ''}
       ${ro ? '' : `<p class="sub" style="margin-top:12px;"><b>How it works</b><br>1. ✏️ Draw a room with your finger — rough is fine. Leave a gap where the door is.<br>2. Tap a wall, then measure it with the tape (or type it). The wall snaps to the size and the room adjusts. The next wall is picked for you.<br>3. Add 🚪 doors, 🪟 windows, ⬛ cabinets/appliances, ⬤ columns and 📝 notes.<br>4. Pinch to zoom, drag with 👆 Select to pan. Tap <b>Save</b> when done.</p>`}`;
   }
+  const _keepScroll = el.scrollTop;
   if(!ro && !S.multi && sel && (sel.kind==='wall' || sel.kind==='room')) h += `<div class="sk2-row" style="margin-top:12px;"><button class="sk2-b" data-sk2p="calcsel">🧮 Materials for this ${sel.kind==='wall'?'wall':'room'} (drywall, studs…)</button></div>`;
   el.innerHTML = h;
+  if(S._panelKey === (S.multi ? 'multi' : sel ? sel.kind+(sel.id||sel.sid||sel.rid||'') : S.tool)) el.scrollTop = _keepScroll;
+  S._panelKey = (S.multi ? 'multi' : sel ? sel.kind+(sel.id||sel.sid||sel.rid||'') : S.tool);
   if(S.multi && !ro) sk2BindCalc();
   // wire the panel
   el.querySelectorAll('[data-sk2p]').forEach(b=>b.addEventListener('click', ()=>sk2PanelAction(b.dataset.sk2p, b)));
@@ -7064,7 +7065,7 @@ function onsiteFormView(){
       <input type="file" id="photo-upload" accept="image/*" multiple style="display:none;">
       <div id="photo-status" class="subtle" style="margin-top:6px;"></div>
 
-      <div class="banner-note">Once submitted, this worksheet stays editable until <b>8:30 AM tomorrow</b>. After that it locks, and office will be notified of any changes made before it locks.</div>
+      <div class="banner-note">After you submit, the worksheet goes to the <b>Review Queue</b>. It can still be opened and edited there (tap <b>✏️ Edit Worksheet</b>).</div>
       <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;flex-wrap:wrap;"><span id="autosave-status" class="subtle" style="font-size:12px;margin-right:auto;">Auto-save is on — your worksheet saves itself as you type.</span><button class="btn ghost" data-action="save-onsite-draft">💾 Save (finish later)</button><button class="btn" data-action="submit-onsite">Submit Worksheet</button></div>
     </div>`;
 }
@@ -7163,30 +7164,72 @@ function renderGenericPhotoGrid(){
 }
 
 function lockBanner(item){
+  return '';
   const locked = isLocked(item);
   if(locked) return `<div class="lock-banner locked">${ICONS.lock} <b>Locked — Final.</b> Submitted ${fmtDateTime(item.dateCreated||item.submittedAt)}. Changes now require a flagged correction.</div>`;
   return `<div class="lock-banner editable">${ICONS.clock} <b>Editable until ${fmtDateTime(item.lockAt)}.</b> Anyone with access can fix mistakes until then.</div>`;
 }
 
+function onsiteMovedOn(f){ return !!f.archived || DB.estimates.some(e=>e.onsiteId===f.id); }   // its estimate is built → it lives with the estimate / project now
 function onsiteReviewView(){
-  const forms = [...DB.onsite].filter(f=>!f.archived).sort((a,b)=> b.dateCreated.localeCompare(a.dateCreated));
   if(STATE.activeOnsiteId){ const f = DB.onsite.find(x=>x.id===STATE.activeOnsiteId); if(f) return onsiteDetailView(f); }
-  return `<div class="card" style="padding:8px 20px;">
+  const sorted = [...DB.onsite].sort((a,b)=> String(b.dateCreated||'').localeCompare(String(a.dateCreated||'')));
+  const moved = sorted.filter(onsiteMovedOn), forms = STATE.showMovedOn ? moved : sorted.filter(f=>!onsiteMovedOn(f));
+  const foot = moved.length ? `<div style="text-align:center;margin-top:10px;"><button class="btn ghost small" data-action="toggle-moved-on">${STATE.showMovedOn ? '← Back to worksheets waiting for an estimate' : '📁 Show finished worksheets ('+moved.length+') — their estimate is already built'}</button></div>` : '';
+  if(!forms.length) return `${STATE.showMovedOn ? '' : emptyState('Nothing waiting', 'New worksheets show up here. Once a worksheet\'s estimate is built, it moves on to Estimates.')}${foot}`;
+  return `${STATE.showMovedOn ? '<div class="banner-note" style="margin-bottom:10px;">Finished worksheets — their estimate is built. Open one to see its pricing calculator, sketches and photos.</div>' : ''}<div class="card" style="padding:8px 20px;">
     ${forms.map(f=>`
       <div class="list-row">
         <div class="main"><b>${esc(f.clientName)}</b>${f.jobName?` <span style="color:var(--muted);font-size:13px"> — ${esc(f.jobName)}</span>`:''} ${f.isNewClient?'<span class="tag category" style="margin-left:6px;">NEW CLIENT</span>':''}
           <div class="meta">${esc(f.propertyAddress)} &nbsp;·&nbsp; ${fmtDate(f.date)} &nbsp;·&nbsp; by ${esc(f.submittedBy)}</div></div>
         <div style="display:flex;align-items:center;gap:10px;">
-          <span class="tag ${isLocked(f)?'locked':'pending'}">${isLocked(f)?'LOCKED':'EDITABLE'}</span>
           <span class="tag ${f.status==='pending'?'pending':'reviewed'}">${f.status==='pending'?'PENDING':'REVIEWED'}</span>
           <button class="btn ghost small" data-action="del-onsite" data-id="${f.id}">Delete</button>
           <button class="btn ghost small" data-action="open-onsite" data-id="${f.id}">Open</button>
         </div>
       </div>`).join('')}
-  </div>`;
+  </div>${foot}`;
 }
 
+function onsiteEditView(f){
+  const v = (k)=> esc(f[k]||'');
+  const ta = (id, label, k)=> `<div class="field"><label>${label}</label><textarea id="${id}" rows="3">${v(k)}</textarea></div>`;
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      <button class="btn ghost small" data-action="cancel-edit-onsite">← Cancel</button>
+      <button class="btn" data-action="save-edit-onsite" data-id="${f.id}">💾 Save Changes</button>
+    </div>
+    <div class="card">
+      <h2 class="page-title" style="margin:0 0 4px;">✏️ Edit Worksheet</h2>
+      <div class="subtle" style="margin-bottom:12px;">Change anything below and tap Save. Photos, plans and the sketch are changed on the worksheet page itself.</div>
+      <div class="section-label"><span class="ws-num">1</span>Job Info</div>
+      <div class="form-grid">
+        <div class="field"><label>Client Name</label><input id="oe-clientName" value="${v('clientName')}"></div>
+        <div class="field"><label>Job Name</label><input id="oe-jobName" value="${v('jobName')}"></div>
+        <div class="field"><label>Property Address</label><input id="oe-address" value="${v('propertyAddress')}"></div>
+        <div class="field"><label>Phone</label><input id="oe-phone" value="${v('phone')}"></div>
+        <div class="field"><label>Date</label><input id="oe-date" type="date" value="${v('date')}"></div>
+        <div class="field"><label>Property Type</label><select id="oe-propType">${['Single Family','Condo','Commercial'].concat(f.propType && !['Single Family','Condo','Commercial'].includes(f.propType) ? [f.propType] : []).map(o=>`<option ${f.propType===o?'selected':''}>${esc(o)}</option>`).join('')}</select></div>
+        <div class="field"><label>Approx. Age of Structure</label><input id="oe-age" value="${v('age')}"></div>
+      </div>
+      <div class="section-label"><span class="ws-num">2</span>Scope Walkthrough Notes</div>
+      ${ta('oe-demo','Demolition','demo')}${ta('oe-constr','Construction & Installation','constr')}${ta('oe-ep','Electrical & Plumbing','ep')}${ta('oe-measure','Rough Measurements','measure')}
+      <div class="section-label"><span class="ws-num">3</span>Subcontractors / Vendors Needed</div>
+      <div class="checklist">${SUB_OPTIONS.concat((f.subs||[]).filter(x=>!SUB_OPTIONS.includes(x))).map(x=>`<label class="chk"><input type="checkbox" data-oe-sub="${esc(x)}" ${(f.subs||[]).includes(x)?'checked':''}> ${esc(x)}</label>`).join('')}</div>
+      <div class="section-label"><span class="ws-num">4</span>Site Notes &amp; Flags</div>
+      <div class="checklist">${FLAG_OPTIONS.concat((f.flags||[]).filter(x=>!FLAG_OPTIONS.includes(x))).map(x=>`<label class="chk"><input type="checkbox" data-oe-flag="${esc(x)}" ${(f.flags||[]).includes(x)?'checked':''}> ${esc(x)}</label>`).join('')}</div>
+      <div class="section-label"><span class="ws-num">5</span>Owner-Supplied Items</div>
+      <div class="field"><textarea id="oe-owner" rows="3">${v('owner')}</textarea></div>
+      <div class="section-label"><span class="ws-num">6</span>Follow-Up / Next Steps</div>
+      <div class="field"><textarea id="oe-followup" rows="3">${v('followup')}</textarea></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+        <button class="btn ghost" data-action="cancel-edit-onsite">Cancel</button>
+        <button class="btn" data-action="save-edit-onsite" data-id="${f.id}">💾 Save Changes</button>
+      </div>
+    </div>`;
+}
 function onsiteDetailView(f){
+  if(STATE.onsiteEditId===f.id) return onsiteEditView(f);
   const linkedEstimate = DB.estimates.find(e=>e.onsiteId===f.id);
   return `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
@@ -7226,7 +7269,7 @@ function onsiteDetailView(f){
       `).join('')}</div>` : `<span class="subtle">No photos attached</span>`}
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:22px;flex-wrap:wrap;align-items:center;">
         ${f.pricingBreakdown ? `<span class="subtle" style="margin-right:auto;">Saved calculation total: <b>${money(calcPricingTotals(f.pricingBreakdown).grandTotal)}</b></span>` : ''}
-        ${!isLocked(f) ? `<button class="btn ghost" data-action="edit-onsite-note" data-id="${f.id}">Simulate Field Edit</button>` : ''}
+        <button class="btn ghost" data-action="edit-onsite" data-id="${f.id}">✏️ Edit Worksheet</button>
         <button class="btn ghost" data-action="del-onsite" data-id="${f.id}">Delete Worksheet</button>
         ${linkedEstimate ? `<button class="btn ghost" data-action="view-estimate" data-id="${linkedEstimate.id}">View Estimate</button>` : ''}
         ${`<button class="${linkedEstimate?'btn ghost':'btn'}" data-action="open-pricing-calculator-onsite" data-id="${f.id}">🧮 ${(f.pricingBreakdown && ((f.pricingBreakdown.materialLines||[]).length || (f.pricingBreakdown.subLines||[]).length || (f.pricingBreakdown.vendorLines||[]).length || parseFloat(f.pricingBreakdown.laborHours))) ? 'Open Saved Calculation' : 'Open Pricing Calculator'}</button>`}
@@ -7734,6 +7777,7 @@ function estimateDetailView(e){
     ${!e.signedAt ? lockBanner(e) : ''}
     <div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin:0 0 10px;">
       <button class="btn ghost small" data-action="open-docs-ready" data-id="${e.id}">📄 Estimate &amp; Contract</button>
+      ${e.onsiteId && DB.onsite.some(o=>o.id===e.onsiteId) ? `<button class="btn ghost small" data-action="open-estimate-worksheet" data-id="${e.onsiteId}">📝 Worksheet &amp; calculator</button>` : ''}
       <button class="btn ghost small" data-action="print-estimate-paper" data-id="${e.id}">🖨 ${e.signedAt?'Print':'Print for Paper Signing'}</button>
       ${c ? `<button class="btn ghost small" data-action="print-both" data-id="${e.id}">🖨 Print Both</button>` : ''}
     </div>
@@ -8404,15 +8448,20 @@ function shoppingListHTML(f){
 }
 
 /* ================= MATERIAL PICKER (search + pictures) for the Pricing Calculator ================= */
-function openMatPicker(lineId, target){
-  const f = DB.onsite.find(x=>x.id===STATE.pricingCalcOnsiteId); if(!f || !f.pricingBreakdown) return;
-  const isMeasure = target==='measure';
-  const line = ((isMeasure ? f.pricingBreakdown.measureLines : f.pricingBreakdown.materialLines)||[]).find(l=>l.id===lineId); if(!line) return;
+/* search words: ignore quote marks and a plural "s" (studs → stud) */
+function matSearchWords(q){ return String(q||'').toLowerCase().replace(/["“”″]/g,' ').split(/\s+/).filter(Boolean).map(w=> (w.length > 3 && /[a-z]s$/.test(w) && !/ss$/.test(w)) ? w.slice(0,-1) : w); }
+function matSearchHit(m, words){ const t = (m.name+' '+(m.size||'')+' '+(m.category||'')+' '+(m.unit||'')).toLowerCase().replace(/["“”″]/g,' '); return words.every(x=>t.includes(x)); }
+function openMatPicker(lineId, target, onPick, startQ){
+  let line = null, f = null, isMeasure = target==='measure';
+  if(typeof onPick !== 'function'){
+    f = DB.onsite.find(x=>x.id===STATE.pricingCalcOnsiteId); if(!f || !f.pricingBreakdown) return;
+    line = ((isMeasure ? f.pricingBreakdown.measureLines : f.pricingBreakdown.materialLines)||[]).find(l=>l.id===lineId); if(!line) return;
+  } else line = { materialId:null };
   const old = document.getElementById('matpicker'); if(old) old.remove();
   const all = matList();
-  let cat = '', q = '', limit = 80;
+  let cat = '', q = startQ || '', limit = 80;
   const ov = document.createElement('div'); ov.id = 'matpicker';
-  ov.style.cssText = 'position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;padding:3vh 12px;overflow:auto;';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;padding:3vh 12px;overflow:auto;';
   ov.innerHTML = `<div style="background:#fff;border-radius:12px;width:100%;max-width:820px;box-shadow:0 10px 40px rgba(0,0,0,.35);display:flex;flex-direction:column;max-height:94vh;">
     <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);">
       <b style="font-size:16px;flex:1;">Pick a material</b>
@@ -8424,8 +8473,7 @@ function openMatPicker(lineId, target){
   </div>`;
   document.body.appendChild(ov);
   const $ = id => ov.querySelector('#'+id);
-  const words = () => q.toLowerCase().split(/\s+/).filter(Boolean);
-  const hit = m => { const w = words(); return (!cat || (m.category||'')===cat) && (!w.length || w.every(x => (m.name+' '+(m.size||'')+' '+(m.category||'')+' '+(m.unit||'')).toLowerCase().includes(x))); };
+  const hit = m => { const w = matSearchWords(q); return (!cat || (m.category||'')===cat) && (!w.length || matSearchHit(m, w)); };
   function paint(){
     const cats = [''].concat(MAT_CATS);
     $('mp-cats').innerHTML = cats.map(c=>`<button type="button" data-mpcat="${esc(c)}" class="btn small ${c===cat?'':'ghost'}">${c?esc(c):'All'}</button>`).join('');
@@ -8443,6 +8491,7 @@ function openMatPicker(lineId, target){
   let _lastPick = 0;
   function choose(p){
     if(Date.now()-_lastPick < 600) return; _lastPick = Date.now();
+    if(typeof onPick === 'function'){ close(); onPick(p.dataset.mppick); return; }
     // look the line up again right now (the page's data can be refreshed while the picker is open)
     const ff = DB.onsite.find(x=>x.id===STATE.pricingCalcOnsiteId);
     const cur = ff && ff.pricingBreakdown && ((isMeasure ? ff.pricingBreakdown.measureLines : ff.pricingBreakdown.materialLines)||[]).find(l=>l.id===lineId);
@@ -8466,6 +8515,7 @@ function openMatPicker(lineId, target){
     if(p){ choose(p); }
   });
   $('mp-q').addEventListener('input', (e)=>{ q = e.target.value; limit = 80; paint(); });
+  if(q) $('mp-q').value = q;
   paint();
   setTimeout(()=>{ try{ $('mp-q').focus(); }catch(e){} }, 50);
 }
@@ -9732,7 +9782,24 @@ Office@gsbconstructions.com`);
     }, {kind:'view-onsite', id:f.id});
   }));
   document.querySelectorAll('[data-action="open-onsite"]').forEach(el=>el.addEventListener('click', ()=>{ STATE.activeOnsiteId=el.dataset.id; render(); }));
-  bindClick('back-review', ()=>{ STATE.activeOnsiteId=null; render(); });
+  bindClick('back-review', ()=>{ STATE.activeOnsiteId=null; STATE.onsiteEditId=null; render(); });
+  bindClick('toggle-moved-on', ()=>{ STATE.showMovedOn = !STATE.showMovedOn; render(); window.scrollTo(0,0); });
+  bindClick('open-estimate-worksheet', (el)=>{ STATE.modal = null; STATE.view = 'onsite'; STATE.subtab.onsite = 'review'; STATE.activeOnsiteId = el.dataset.id; STATE.onsiteEditId = null; render(); window.scrollTo(0,0); });
+  bindClick('edit-onsite', (el)=>{ STATE.onsiteEditId = el.dataset.id; render(); window.scrollTo(0,0); });
+  bindClick('cancel-edit-onsite', ()=>{ STATE.onsiteEditId = null; render(); window.scrollTo(0,0); });
+  bindClick('save-edit-onsite', async (el)=>{
+    const f = DB.onsite.find(x=>x.id===el.dataset.id); if(!f) return;
+    const g = (id)=>{ const x = document.getElementById(id); return x ? x.value.trim() : ''; };
+    const nm = g('oe-clientName'); if(!nm){ alert('Client name is required.'); return; }
+    Object.assign(f, { clientName:nm, jobName:g('oe-jobName'), propertyAddress:g('oe-address'), phone:g('oe-phone'), date:g('oe-date') || f.date, propType:g('oe-propType'), age:g('oe-age'),
+      demo:g('oe-demo'), constr:g('oe-constr'), ep:g('oe-ep'), measure:g('oe-measure'), owner:g('oe-owner'), followup:g('oe-followup'),
+      subs:[...document.querySelectorAll('[data-oe-sub]')].filter(c=>c.checked).map(c=>c.dataset.oeSub),
+      flags:[...document.querySelectorAll('[data-oe-flag]')].filter(c=>c.checked).map(c=>c.dataset.oeFlag),
+      editedAt: nowISO(), editedBy: STATE.user.first+' '+STATE.user.last });
+    STATE.onsiteEditId = null; render(); window.scrollTo(0,0);
+    await saveRecord('onsite', f);
+    showToast('✓ Worksheet saved');
+  });
   document.querySelectorAll('[data-action="edit-onsite-note"]').forEach(el=>el.addEventListener('click', ()=>{
     const f = DB.onsite.find(x=>x.id===el.dataset.id); f.followup = (f.followup||'') + '\n[Edited by '+STATE.user.first+' during grace window]';
     saveRecord('onsite', f); pushNotification(`${STATE.user.first} ${STATE.user.last} edited the worksheet for ${f.clientName} before it locked.`); render();
@@ -10800,6 +10867,6 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.12-p</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2.0-2026.11.13-a</div>
 </body>
 </html>
