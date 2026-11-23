@@ -335,7 +335,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2026.11.23-qb2-TEST';
+const APP_VERSION = 'v2026.11.23-qb3-TEST';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -12748,7 +12748,7 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2026.11.23-qb2-TEST</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2026.11.23-qb3-TEST</div>
 <script>
 /* ================= QUICKBOOKS SYNC (owner only) =================
    Talks to the GSB QuickBooks bridge on Firebase. It never changes the app's own data:
@@ -12784,7 +12784,8 @@ function qbLoadPlan(cid){
   if(!qbIsOwner() || !qbPin() || !navigator.onLine || QB.planBusy[cid] || Date.now()-(QB.planAt[cid]||0) < 60000) return;
   QB.planBusy[cid] = true;
   qbCall('status').then(conn=>{ QB.conn = conn; return conn.connected ? qbCall('plan', {clientId:cid}) : null; })
-    .then(p=>{ QB.plans[cid] = p; QB.err = null; })
+    .then(p=>{ QB.plans[cid] = p; QB.err = null;
+      return (p && p.items.some(it=>it.type==='estimate' && it.qbId)) ? qbCall('billStatus', {clientId:cid}).then(b=>{ (QB.bills = QB.bills||{})[cid] = b; }) : null; })
     .catch(e=>{ QB.err = e.message; })
     .finally(()=>{ QB.planBusy[cid] = false; QB.planAt[cid] = Date.now(); render(); });
 }
@@ -12834,6 +12835,7 @@ function qbClientPanel(c){
       <div style="font-size:14px;">${esc(it.label)}${extra}${why}</div><div>${qbPill(it.status)}</div></div>`;
   }).join('');
   const n = p.summary.needs;
+  const billHTML = qbBillSection(c.id);
   return box(`
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer;">
       <input type="checkbox" data-qb="skip" data-cid="${c.id}" ${p.skipped?'checked':''}> Don't sync this client to QuickBooks</label>
@@ -12843,8 +12845,54 @@ function qbClientPanel(c){
         n ? `<button class="btn small" data-qb="preview" data-cid="${c.id}">Review & sync ${n} item${n===1?'':'s'}</button>` :
         `<span style="font-size:13px;color:#2e7d32;">Everything ready is in QuickBooks.</span>`}
       <button class="btn ghost small" data-qb="retry" data-cid="${c.id}">Refresh</button>
-    </div>`);
+    </div>${billHTML}`);
 }
+
+/* ---------- payment schedule + billing ---------- */
+const QB_BILL = { unbilled:['#6b6b6b','#f1efe8','Not billed'], billed:['#8a6d00','#fff6d6','Billed, not sent'], sent:['#185FA5','#e6f1fb','Sent'],
+  'part-paid':['#185FA5','#e6f1fb','Part paid'], paid:['#2e7d32','#e8f5e9','Paid'], missing:['#b3261e','#fdecea','Invoice not found in QuickBooks'] };
+function qbInvUrl(id){ return (QB.conn && QB.conn.env==='production' ? 'https://qbo.intuit.com' : 'https://sandbox.qbo.intuit.com') + '/app/invoice?txnId=' + encodeURIComponent(id); }
+function qbBillSection(cid){
+  const b = QB.bills && QB.bills[cid];
+  if(!b || !b.items.length) return '';
+  const jobs = {};
+  b.items.forEach(it=>{ (jobs[it.jobName] = jobs[it.jobName] || []).push(it); });
+  return Object.keys(jobs).map(job=>{
+    const list = jobs[job];
+    if(!list[0].ready) return `<div class="subtle" style="font-size:13px;margin-top:12px;">${esc(job)}: sync this job first, then you can bill it here.</div>`;
+    const nextKey = (list.find(it=>it.state==='unbilled')||{}).key;
+    const rows = list.map(it=>{
+      const st = QB_BILL[it.state]||QB_BILL.unbilled;
+      const num = it.invoice && it.invoice.docNumber ? ' #'+esc(it.invoice.docNumber) : '';
+      const pill = `<span style="display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;color:${st[0]};background:${st[1]};white-space:nowrap;">${esc(st[2])}${num}${it.external?' (outside app)':''}</span>`;
+      let act = '';
+      if(it.state==='unbilled') act = `<button class="btn ${it.key===nextKey?'':'ghost '}small" data-qb="bill" data-cid="${cid}" data-key="${esc(it.key)}">Bill</button>
+        <a href="#" data-qb="mark" data-cid="${cid}" data-key="${esc(it.key)}" style="font-size:12px;margin-left:6px;">Already billed?</a>`;
+      else if(it.state==='billed' && !it.external) act = `<button class="btn small" data-qb="send" data-cid="${cid}" data-key="${esc(it.key)}">Send</button>`;
+      if(it.invoice && it.invoice.id && it.state!=='missing') act += ` <a href="${qbInvUrl(it.invoice.id)}" target="_blank" rel="noopener" style="font-size:12px;margin-left:6px;">View</a>`;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line,#eee);flex-wrap:wrap;">
+        <div style="font-size:14px;">${esc(it.label)} <b>${qbMoney(it.amount)}</b> ${pill}</div><div style="white-space:nowrap;">${act}</div></div>`;
+    }).join('');
+    const billed = list.filter(it=>it.state!=='unbilled').reduce((t,it)=>t+it.amount,0), total = list.reduce((t,it)=>t+it.amount,0);
+    return `<div style="margin-top:14px;"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px;"><b>Payment schedule: ${esc(job)}</b>
+      <span class="subtle">Billed ${qbMoney(billed)} of ${qbMoney(total)}</span></div>${rows}</div>`;
+  }).join('');
+}
+function qbFindBill(cid, key){ const b = QB.bills && QB.bills[cid]; return b ? { item: b.items.find(x=>x.key===key), email: b.clientEmail } : {}; }
+function qbSendForm(cid, key, email, inv){
+  const test = !QB.conn || QB.conn.env!=='production';
+  if(test) email = '';   // test company: never pre-fill a real client's email
+  return `<div style="margin-top:12px;padding:10px 12px;background:#faf7f0;border-radius:8px;">
+    <b>Send it to the client now?</b>${inv && inv.id ? ` <a href="${qbInvUrl(inv.id)}" target="_blank" rel="noopener" style="font-size:13px;">Look at it in QuickBooks first</a>` : ''}
+    <div style="margin-top:8px;font-size:13px;">Send to:</div>
+    <input id="qb-send-to" type="email" value="${esc(email||'')}" placeholder="${test?'your own email (test company)':'client@email.com'}" style="width:100%;max-width:340px;">
+    ${test?`<div style="font-size:12px;color:#8a6d00;margin-top:4px;">Test company: type your own email so no real client gets a test invoice.</div>`:''}
+    <div id="qb-send-err" style="color:#b3261e;font-size:13px;margin-top:6px;"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+      <button class="btn ghost" data-qb="close">Not now</button>
+      <button class="btn" data-qb="send-confirm" data-cid="${cid}" data-key="${esc(key)}">Send to client</button></div></div>`;
+}
+function qbBillDone(cid){ QB.planAt[cid] = 0; render(); }
 
 /* preview + confirm window (its own overlay, separate from the app's modals) */
 function qbModal(html){
@@ -12950,7 +12998,45 @@ document.addEventListener('click', async (ev)=>{
     else if(a==='connect'){ const w = window.open('', '_blank'); const r = await qbCall('connectLink'); if(w) w.location = r.url; else window.location.href = r.url; }
     else if(a==='preview'){ await qbOpenPreview(cid); }
     else if(a==='confirm'){ await qbConfirm(); }
-    else if(a==='close'){ QB.preview = null; qbModal(null); }
+    else if(a==='close'){ QB.preview = null; qbModal(null); qbBillDone(STATE.activeClientId); }
+    else if(a==='bill'){ const f = qbFindBill(cid, el.dataset.key), it = f.item; if(!it) return;
+      qbModal(`<h2 style="margin:0 0 6px;font-size:20px;">Bill this payment${QB.conn&&QB.conn.env==='sandbox'?' <span style="font-size:12px;color:#8a6d00;background:#fff6d6;padding:2px 8px;border-radius:10px;vertical-align:middle;">TEST COMPANY</span>':''}</h2>
+        <div style="font-size:15px;margin:8px 0;"><b>${esc(it.label)}</b>: <b>${qbMoney(it.amount)}</b></div>
+        <div class="subtle" style="font-size:13px;">${esc(it.desc)}</div>
+        <div style="margin-top:10px;font-size:13px;">This makes the invoice in QuickBooks. <b>It is not sent yet.</b> You'll get to look at it and choose to send it next.</div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;"><button class="btn ghost" data-qb="close">Cancel</button>
+        <button class="btn" data-qb="bill-confirm" data-cid="${cid}" data-key="${esc(it.key)}">Make invoice</button></div>`); }
+    else if(a==='bill-confirm'){ const f = qbFindBill(cid, el.dataset.key), it = f.item; if(!it) return;
+      qbModal(`<p>Making the invoice…</p>`);
+      try{ const r = await qbCall('billCreate', {clientId:cid, key:it.key, amount:it.amount}); const inv = r.invoice||{};
+        qbModal(`<h2 style="margin:0 0 6px;font-size:20px;">Invoice ${inv.docNumber?'#'+esc(inv.docNumber)+' ':''}${r.already?'was already made':'made'}</h2>
+          <div style="font-size:15px;"><b>${esc(it.label)}</b>: <b>${qbMoney(inv.total!=null?inv.total:it.amount)}</b>${inv.dueDate?` <span class="subtle" style="font-size:13px;">due ${esc(inv.dueDate)}</span>`:''}</div>
+          <div class="subtle" style="font-size:13px;margin-top:4px;">Not sent to the client yet.</div>${qbSendForm(cid, it.key, inv.email||f.email, inv)}`);
+      }catch(e){ qbModal(`<p style="color:#b3261e">${esc(e.message)}</p><div style="text-align:right"><button class="btn ghost" data-qb="close">Close</button></div>`); } }
+    else if(a==='send'){ const f = qbFindBill(cid, el.dataset.key), it = f.item; if(!it) return;
+      qbModal(`<h2 style="margin:0 0 6px;font-size:20px;">Send invoice${it.invoice&&it.invoice.docNumber?' #'+esc(it.invoice.docNumber):''}</h2>
+        <div style="font-size:15px;"><b>${esc(it.label)}</b>: <b>${qbMoney(it.amount)}</b></div>${qbSendForm(cid, it.key, (it.invoice&&it.invoice.email)||f.email, it.invoice)}`); }
+    else if(a==='send-confirm'){ const to = (document.getElementById('qb-send-to')||{}).value||'';
+      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to.trim())){ document.getElementById('qb-send-err').textContent = 'Enter a valid email address first.'; return; }
+      qbModal(`<p>Sending…</p>`);
+      try{ const r = await qbCall('billSend', {clientId:cid, key:el.dataset.key, sendTo:to.trim()});
+        qbModal(`<h2 style="margin:0 0 6px;font-size:20px;">Sent</h2><div>Invoice${r.invoice&&r.invoice.docNumber?' #'+esc(r.invoice.docNumber):''} was emailed to <b>${esc(r.sentTo)}</b>.</div>
+          <div style="text-align:right;margin-top:14px;"><button class="btn" data-qb="close">OK</button></div>`);
+      }catch(e){ qbModal(`<p style="color:#b3261e">${esc(e.message)}</p><div style="text-align:right"><button class="btn ghost" data-qb="close">Close</button></div>`); } }
+    else if(a==='mark'){ const f = qbFindBill(cid, el.dataset.key), it = f.item; if(!it) return;
+      qbModal(`<h2 style="margin:0 0 6px;font-size:20px;">Already billed?</h2>
+        <div style="font-size:14px;">If you already billed <b>${esc(it.label)} (${qbMoney(it.amount)})</b> in QuickBooks yourself, type that invoice number. The app will treat this payment as billed and never bill it again.</div>
+        <input id="qb-mark-num" placeholder="Invoice number, like 1078" style="margin-top:10px;max-width:220px;">
+        <div id="qb-mark-err" style="color:#b3261e;font-size:13px;margin-top:6px;"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button class="btn ghost" data-qb="close">Cancel</button>
+        <button class="btn" data-qb="mark-confirm" data-cid="${cid}" data-key="${esc(it.key)}">Mark as billed</button></div>`); }
+    else if(a==='mark-confirm'){ const num = ((document.getElementById('qb-mark-num')||{}).value||'').trim();
+      if(!num){ document.getElementById('qb-mark-err').textContent = 'Type the invoice number first.'; return; }
+      try{ const r = await qbCall('billMarkExternal', {clientId:cid, key:el.dataset.key, docNumber:num});
+        qbModal(`<h2 style="margin:0 0 6px;font-size:20px;">Marked as billed</h2><div>Linked to invoice #${esc(r.invoice&&r.invoice.docNumber||num)}${r.invoice?` (${qbMoney(r.invoice.total)}, ${r.invoice.balance<=0?'paid':'balance '+qbMoney(r.invoice.balance)})`:''}.</div>
+          ${r.amountDiffers?`<div style="color:#8a6d00;margin-top:8px;font-size:13px;">Heads up: that invoice's total isn't ${qbMoney(r.expected)} like this payment. Double check it's the right one.</div>`:''}
+          <div style="text-align:right;margin-top:14px;"><button class="btn" data-qb="close">OK</button></div>`);
+      }catch(e){ document.getElementById('qb-mark-err').textContent = e.message; } }
   }catch(e){ QB.err = e.message; render(); }
 });
 document.addEventListener('change', async (ev)=>{
