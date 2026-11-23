@@ -335,7 +335,7 @@ canvas.sketch-canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);touc
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
 <script>
 /* Auto-update: if this device is showing an old saved copy, grab the newest one automatically. */
-const APP_VERSION = 'v2026.11.23-qb3-TEST';
+const APP_VERSION = 'v2026.11.23-qb4-TEST';
 (function(){
   try{
     if(!/^https?:/i.test(location.protocol)) return;
@@ -10785,6 +10785,7 @@ function projectCardHTML(c, pr, opts){
         ${p.stageToggle ? `<button class="btn ghost small" data-action="rename-project" data-cid="${c.id}" data-pid="${pr.id}">Rename</button>` : ''}
       </div>
       ${progressBar(pr)}
+      ${typeof qbProjectBlock==='function' ? qbProjectBlock(c, pr, opts) : ''}
       ${(pr.onsiteId || pr.estimateId || pr.contractId) ? `
       <div class="section-label" style="margin-top:16px;">Project Documents</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -12748,7 +12749,7 @@ if('serviceWorker' in navigator){
   });
 }
 </script>
-<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2026.11.23-qb3-TEST</div>
+<div id="app-version" style="position:fixed;right:8px;bottom:4px;font:10px/1 Inter,sans-serif;color:#9a9486;opacity:.8;pointer-events:none;z-index:5;">v2026.11.23-qb4-TEST</div>
 <script>
 /* ================= QUICKBOOKS SYNC (owner only) =================
    Talks to the GSB QuickBooks bridge on Firebase. It never changes the app's own data:
@@ -12824,7 +12825,8 @@ function qbClientPanel(c){
   if(QB.err && !p) return box(`<div style="color:#b3261e;font-size:13px;">${esc(QB.err)}</div><button class="btn ghost small" style="margin-top:8px" data-qb="retry" data-cid="${c.id}">Try again</button>`);
   if(QB.conn && !QB.conn.connected) return box(`<div class="subtle" style="margin-bottom:8px;">QuickBooks isn't connected yet.</div><button class="btn small" data-qb="connect" data-cid="${c.id}">Connect QuickBooks</button>`);
   if(!p) return box(`<div class="subtle">Checking QuickBooks…</div>`);
-  const rows = p.items.map(it=>{
+  const jobCount = p.items.filter(it=>it.type==='project').length;
+  const rows = p.items.filter(it=>it.type==='customer').map(it=>{
     let extra = '';
     if(it.status==='changed' && it.before && it.fields){
       if(it.before.total!==undefined && it.before.total!==it.fields.total) extra = ` <span class="subtle" style="font-size:12px;">(${qbMoney(it.before.total)} → ${qbMoney(it.fields.total)})</span>`;
@@ -12835,7 +12837,7 @@ function qbClientPanel(c){
       <div style="font-size:14px;">${esc(it.label)}${extra}${why}</div><div>${qbPill(it.status)}</div></div>`;
   }).join('');
   const n = p.summary.needs;
-  const billHTML = qbBillSection(c.id);
+  const billHTML = jobCount ? `<div class="subtle" style="font-size:13px;margin-top:10px;">Each job's QuickBooks status, payment schedule and Bill buttons are on the job below.</div>` : '';
   return box(`
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer;">
       <input type="checkbox" data-qb="skip" data-cid="${c.id}" ${p.skipped?'checked':''}> Don't sync this client to QuickBooks</label>
@@ -12848,15 +12850,60 @@ function qbClientPanel(c){
     </div>${billHTML}`);
 }
 
+function qbItemRow(it){
+  let extra = '';
+  if(it.status==='changed' && it.before && it.fields){
+    if(it.before.total!==undefined && it.before.total!==it.fields.total) extra = ` <span class="subtle" style="font-size:12px;">(${qbMoney(it.before.total)} → ${qbMoney(it.fields.total)})</span>`;
+    else extra = ` <span class="subtle" style="font-size:12px;">(details changed)</span>`;
+  }
+  const why = it.status==='waiting' && it.waiting ? `<div class="subtle" style="font-size:12px;">${esc(it.waiting)}</div>` : '';
+  return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:7px 0;border-top:1px solid var(--line,#eee);">
+    <div style="font-size:14px;">${esc(it.label)}${extra}${why}</div><div>${qbPill(it.status)}</div></div>`;
+}
+/* one job's QuickBooks section, drawn inside that job's card */
+function qbProjectBlock(c, pr, opts){
+  if(!qbIsOwner() || !qbPin() || !navigator.onLine) return '';
+  opts = opts || {};
+  if(opts.showClient){            // Jobs list: small badge only
+    qbLoadSummary();
+    const s = QB.summary && QB.summary[c.id];
+    const j = s && s.projects && s.projects[pr.id];
+    if(!s) return '';
+    let pill = '';
+    if(s.skipped) pill = qbPill('skipped','QuickBooks off');
+    else if(!j) pill = '';
+    else if(j.changed) pill = qbPill('changed', j.needs+' to sync');
+    else if(j.new) pill = qbPill('new', j.needs+' to sync');
+    else if(j.synced) pill = qbPill('synced','In QuickBooks');
+    else if(j.waiting) pill = qbPill('waiting','QuickBooks: not ready yet');
+    return pill ? `<div style="margin:6px 0 0;">${pill}</div>` : '';
+  }
+  const p = QB.plans[c.id];
+  if(!p) return '';
+  const pk = 'project:' + pr.id;
+  const mine = p.items.filter(it=>it.key===pk || it.parent===pk);
+  if(!mine.length) return '';
+  const needs = mine.filter(it=>it.status==='new' || it.status==='changed').length;
+  return `<div style="border:1px solid var(--line,#ddd);border-radius:8px;padding:10px 14px;margin:14px 0 4px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+      <div class="section-label" style="margin:0">QuickBooks: this job</div>
+      ${QB.conn && QB.conn.env==='sandbox' ? `<span style="font-size:11px;font-weight:700;color:#8a6d00;background:#fff6d6;padding:2px 8px;border-radius:10px;">TEST COMPANY</span>` : ''}
+    </div>
+    ${mine.map(qbItemRow).join('')}
+    ${needs && !p.skipped ? `<div style="margin-top:8px;"><button class="btn small" data-qb="preview" data-cid="${c.id}">Review & sync ${needs} item${needs===1?'':'s'}</button></div>` : ''}
+    ${qbBillSection(c.id, pk)}
+  </div>`;
+}
+
 /* ---------- payment schedule + billing ---------- */
 const QB_BILL = { unbilled:['#6b6b6b','#f1efe8','Not billed'], billed:['#8a6d00','#fff6d6','Billed, not sent'], sent:['#185FA5','#e6f1fb','Sent'],
   'part-paid':['#185FA5','#e6f1fb','Part paid'], paid:['#2e7d32','#e8f5e9','Paid'], missing:['#b3261e','#fdecea','Invoice not found in QuickBooks'] };
 function qbInvUrl(id){ return (QB.conn && QB.conn.env==='production' ? 'https://qbo.intuit.com' : 'https://sandbox.qbo.intuit.com') + '/app/invoice?txnId=' + encodeURIComponent(id); }
-function qbBillSection(cid){
+function qbBillSection(cid, projectKey){
   const b = QB.bills && QB.bills[cid];
   if(!b || !b.items.length) return '';
   const jobs = {};
-  b.items.forEach(it=>{ (jobs[it.jobName] = jobs[it.jobName] || []).push(it); });
+  b.items.filter(it=>!projectKey || it.projectKey===projectKey).forEach(it=>{ (jobs[it.jobName] = jobs[it.jobName] || []).push(it); });
   return Object.keys(jobs).map(job=>{
     const list = jobs[job];
     if(!list[0].ready) return `<div class="subtle" style="font-size:13px;margin-top:12px;">${esc(job)}: sync this job first, then you can bill it here.</div>`;
@@ -12874,7 +12921,7 @@ function qbBillSection(cid){
         <div style="font-size:14px;">${esc(it.label)} <b>${qbMoney(it.amount)}</b> ${pill}</div><div style="white-space:nowrap;">${act}</div></div>`;
     }).join('');
     const billed = list.filter(it=>it.state!=='unbilled').reduce((t,it)=>t+it.amount,0), total = list.reduce((t,it)=>t+it.amount,0);
-    return `<div style="margin-top:14px;"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px;"><b>Payment schedule: ${esc(job)}</b>
+    return `<div style="margin-top:14px;"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px;"><b>Payment schedule</b>
       <span class="subtle">Billed ${qbMoney(billed)} of ${qbMoney(total)}</span></div>${rows}</div>`;
   }).join('');
 }
